@@ -7,21 +7,17 @@ SCDLLName("DiNapoliExpansion")
 // --- STAŁE ARCHITEKTONICZNE ---
 const int GLOBAL_SYNC_SLOT = 9999;           
 
-// --- STRUKTURY DANYCH (ZMODYFIKOWANA: ZERO-MATH RENDERER) ---
+// --- STRUKTURY DANYCH (ZAMROŻONE) ---
 struct SavedExpansion {
     float pA, pB, pC;
     SCDateTime tA, tB, tC;
     int aType;
-    int idxA, idxB, idxC; 
+    int idxA, idxB, idxC;
     
-    float vCOP, vOP, vXOP; 
+    float vCOP, vOP, vXOP;
     
-    char sA[32], sB[32], sC[32]; 
+    char sA[32], sB[32], sC[32];
     char sCOP[32], sOP[32], sXOP[32];
-
-    // ZMIANA: Pre-calculated widths for Zero-Math Rendering
-    int dwA, dwB, dwC;
-    int dwCOP, dwOP, dwXOP;
 };
 
 struct DiNapoliData {
@@ -29,7 +25,7 @@ struct DiNapoliData {
     int numSaved;
 };
 
-// --- FUNKCJA ODŚWIEŻAJĄCA TEKSTY I GEOMETRIĘ ---
+// --- FUNKCJA ODŚWIEŻAJĄCA TEKSTY (ZAMROŻONA) ---
 void RefreshExpansionStrings(SCStudyInterfaceRef sc, SavedExpansion& exp) {
     if (exp.pA <= 0) return;
     float wave = exp.pB - exp.pA;
@@ -48,14 +44,6 @@ void RefreshExpansionStrings(SCStudyInterfaceRef sc, SavedExpansion& exp) {
     strncpy(exp.sCOP, sc.FormatGraphValue(exp.vCOP, sc.BaseGraphValueFormat).GetChars(), 31);
     strncpy(exp.sOP,  sc.FormatGraphValue(exp.vOP,  sc.BaseGraphValueFormat).GetChars(), 31);
     strncpy(exp.sXOP, sc.FormatGraphValue(exp.vXOP, sc.BaseGraphValueFormat).GetChars(), 31);
-
-    // ZMIANA: Zero-Math Renderer - obliczamy szerokość raz
-    exp.dwA = (int)(strlen(exp.sA) / 2) + 2;
-    exp.dwB = (int)(strlen(exp.sB) / 2) + 2;
-    exp.dwC = (int)(strlen(exp.sC) / 2) + 2;
-    exp.dwCOP = (int)(strlen(exp.sCOP) / 2) + 1;
-    exp.dwOP  = (int)(strlen(exp.sOP) / 2) + 1;
-    exp.dwXOP = (int)(strlen(exp.sXOP) / 2) + 1;
 }
 
 // --- DYNAMICZNE WYSZUKIWANIE ID MENU ---
@@ -120,7 +108,6 @@ void SaveDiNapoliData(SCStudyInterfaceRef sc, DiNapoliData* pData) {
 void LoadDiNapoliData(SCStudyInterfaceRef sc, DiNapoliData* pData) {
     SCString filePath;
     filePath.Format("%sDN_Exp_C%d_S%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
-    // FIXED: Build Error Fix
     std::ifstream inFile(filePath.GetChars(), std::ios::binary);
     if (inFile.is_open()) {
         inFile.read((char*)pData, sizeof(DiNapoliData));
@@ -174,7 +161,6 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
     int& AType = sc.GetPersistentInt(12);
     int& LastSyncValue = sc.GetPersistentInt(15); 
     int& LastLeftIdx = sc.GetPersistentInt(16); 
-    int& CachedMenuID = sc.GetPersistentInt(30); 
     int snapRange = sc.Input[6].GetInt();
 
     sc.SetCustomStudyControlBarButtonText(DrawBtn, "Expansion");
@@ -182,7 +168,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
     sc.SetCustomStudyControlBarButtonText(LastDelBtn, "LAST DEL");
     sc.SetCustomStudyControlBarButtonText(AllDelBtn, "ALL DEL");
 
-    // --- 3. LOGIKA SYSTEMOWA (HIDE SYNC) ---
+    // --- 3. LOGIKA SYSTEMOWA (FIXED TOGGLE ORDER) ---
     int currentGlobalHide = sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT);
 
     if (sc.Input[7].GetYesNo() == 1 && sc.MenuEventID == HideBtn) {
@@ -191,8 +177,8 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         
         HWND hRoot = ::GetAncestor((HWND)sc.ChartWindowHandle, GA_ROOT);
         if (hRoot != NULL) {
-            if (CachedMenuID <= 0) CachedMenuID = FindSierraMenuCommandID(hRoot, "Chart", "Hide Chart Drawings");
-            if (CachedMenuID != -1) ::PostMessage(hRoot, WM_COMMAND, CachedMenuID, 0);
+            int dynamicID = FindSierraMenuCommandID(hRoot, "Chart", "Hide Chart Drawings");
+            if (dynamicID != -1) ::PostMessage(hRoot, WM_COMMAND, dynamicID, 0);
             else ::PostMessage(hRoot, WM_COMMAND, 211, 0); 
         }
         
@@ -203,7 +189,6 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
 
     bool IsVisible = (currentGlobalHide == 0);
 
-    // --- CZYSZCZENIE ---
     if (sc.MenuEventID == LastDelBtn) {
         if (pData->numSaved > 0) {
             int lastIdx = pData->numSaved - 1;
@@ -242,23 +227,9 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         }
     }
 
-    // --- THROTTLING LOGIC ---
     bool needsRedraw = (sc.ArraySize != LastSize) || (sc.IndexOfFirstVisibleBar != LastLeftIdx) || (currentGlobalHide != LastSyncValue) || sc.IsFullRecalculation || (TState > 0);
     if (currentGlobalHide != LastSyncValue) { LastSyncValue = currentGlobalHide; LastSize = -1; }
     if (sc.IsFullRecalculation) LastSize = -1;
-
-    // --- ZMIANA: DEEP HOISTING NUDGE (OPTYMALIZACJA 1) ---
-    float globalNudgeVal = 0.0f;
-    if (IsVisible && (needsRedraw || TState > 0)) {
-        float vH_global = -1e10f, vL_global = 1e10f;
-        for (int i = sc.IndexOfFirstVisibleBar; i <= sc.IndexOfLastVisibleBar; i++) {
-            if (sc.High[i] > vH_global) vH_global = sc.High[i];
-            if (sc.Low[i] < vL_global) vL_global = sc.Low[i];
-        }
-        float chartRange_global = vH_global - vL_global; 
-        if (chartRange_global <= 0) chartRange_global = sc.TickSize * 100;
-        globalNudgeVal = chartRange_global * -0.001f; 
-    }
 
     if (sc.CharacterEventCode == 32 && TState > 0) {
         for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
@@ -311,19 +282,26 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         }
     }
 
-    // --- 6. RENDERER (ZERO-MATH: WYKORZYSTUJE PRE-CALCULATED DW) ---
+    // --- 6. RENDERER ---
     s_UseTool Tool;
-    auto DrawExpansionPreformatted = [&](const SavedExpansion& exp, int idS, bool drawLevels, float currentNudge) {
+    auto DrawExpansionPreformatted = [&](const SavedExpansion& exp, int idS, bool drawLevels) {
         if (exp.pA <= 0 || exp.idxA < 0) return;
         
         int rightBoundary = exp.idxC + 15; 
         if (rightBoundary < sc.IndexOfFirstVisibleBar) return;
 
         bool isAHigh = (exp.aType == 1); bool isBHigh = (exp.aType != 1); bool isCHigh = (exp.aType == 1);
+        float vH = -1e10f, vL = 1e10f;
+        for (int i = sc.IndexOfFirstVisibleBar; i <= sc.IndexOfLastVisibleBar; i++) {
+            if (sc.High[i] > vH) vH = sc.High[i];
+            if (sc.Low[i] < vL) vL = sc.Low[i];
+        }
+        float chartRange = vH - vL; if (chartRange <= 0) chartRange = sc.TickSize * 100;
+        float nudgeVal = chartRange * -0.001f; 
 
-        auto AnchorPoint = [&](float p, int idx, const char* labelStr, int id, bool isPointHigh, int DW) {
-            float pDrawn = isPointHigh ? (p + currentNudge) : p;
-
+        auto AnchorPoint = [&](float p, int idx, const char* labelStr, int id, bool isPointHigh) {
+            float pDrawn = isPointHigh ? (p + nudgeVal) : p;
+            int DW = (strlen(labelStr) / 2) + 2; 
             Tool.Clear(); Tool.AddMethod = UTAM_ADD_OR_ADJUST; Tool.DrawingType = DRAWING_TEXT;
             Tool.AddAsUserDrawnDrawing = 0; Tool.FontFace = "SimSun"; Tool.FontSize = 9; Tool.FontBold = 0; 
             Tool.Color = sc.Input[4].GetColor(); Tool.Text = "○"; Tool.TextAlignment = DT_CENTER | DT_VCENTER;
@@ -339,15 +317,15 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
             Tool.TextAlignment = DT_LEFT | DT_TOP; Tool.LineNumber = id + 2; sc.UseTool(Tool);
         };
 
-        // ZMIANA: Używamy gotowych szerokości dwA, dwB, dwC
-        AnchorPoint(exp.pA, exp.idxA, exp.sA, idS, isAHigh, exp.dwA);
-        AnchorPoint(exp.pB, exp.idxB, exp.sB, idS + 3, isBHigh, exp.dwB);
-        AnchorPoint(exp.pC, exp.idxC, exp.sC, idS + 6, isCHigh, exp.dwC);
+        AnchorPoint(exp.pA, exp.idxA, exp.sA, idS, isAHigh);
+        AnchorPoint(exp.pB, exp.idxB, exp.sB, idS + 3, isBHigh);
+        AnchorPoint(exp.pC, exp.idxC, exp.sC, idS + 6, isCHigh);
 
         if (!drawLevels) return;
         int sX = exp.idxC + 1;
-        auto L = [&](float p, COLORREF c, const char* valStr, const char* ratioLabel, int id, int DW) {
-            int eX = sX + DW; int tX = (sX + eX) / 2;
+        auto L = [&](float p, COLORREF c, const char* valStr, const char* ratioLabel, int id) {
+            int DW = (strlen(valStr) / 2) + 1; int eX = sX + DW; int tX = (sX + eX) / 2;
+            
             Tool.Clear(); Tool.AddMethod = UTAM_ADD_OR_ADJUST; Tool.DrawingType = DRAWING_LINE;
             Tool.AddAsUserDrawnDrawing = 0; Tool.BeginIndex = sX; Tool.EndIndex = eX; Tool.BeginValue = p; Tool.EndValue = p;
             Tool.Color = c; Tool.LineWidth = 1; Tool.LineNumber = id; sc.UseTool(Tool);
@@ -355,12 +333,22 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
             Tool.Clear(); Tool.AddMethod = UTAM_ADD_OR_ADJUST; Tool.DrawingType = DRAWING_TEXT;
             Tool.AddAsUserDrawnDrawing = 0; Tool.BeginIndex = tX; Tool.BeginValue = p; Tool.Color = c; Tool.FontSize = 8; Tool.FontBold = 1;
             Tool.FontFace = "Arial"; Tool.Text = valStr; Tool.TextAlignment = DT_CENTER | DT_BOTTOM; Tool.LineNumber = id+1; sc.UseTool(Tool);
-            Tool.Text = ratioLabel; Tool.TextAlignment = DT_CENTER | DT_TOP; Tool.LineNumber = id+2; sc.UseTool(Tool);
+            
+            // --- PIXEL-PERFECT OFFSET DLA DOLNEJ ETYKIETY (RATIO) ---
+            float ratioPrice = p;
+            int pY = sc.RegionValueToYPixelCoordinate(p, sc.GraphRegion);
+            if (pY > 0) {
+                // W koordynatach ekranowych Y rośnie w dół, więc +1 piksel daje przesunięcie w dół
+                ratioPrice = sc.YPixelCoordinateToGraphValue(pY + 1); 
+            }
+            // --------------------------------------------------------
+
+            Tool.Text = ratioLabel; Tool.BeginValue = ratioPrice; Tool.TextAlignment = DT_CENTER | DT_TOP; Tool.LineNumber = id+2; sc.UseTool(Tool);
         };
-        // ZMIANA: Używamy gotowych szerokości dwCOP, dwOP, dwXOP
-        L(exp.vCOP, sc.Input[1].GetColor(), exp.sCOP, "0.618", idS+10, exp.dwCOP);
-        L(exp.vOP,  sc.Input[2].GetColor(), exp.sOP,  "1.000", idS+13, exp.dwOP);
-        L(exp.vXOP, sc.Input[3].GetColor(), exp.sXOP, "1.618", idS+16, exp.dwXOP);
+        
+        L(exp.vCOP, sc.Input[1].GetColor(), exp.sCOP, "0.618", idS+10);
+        L(exp.vOP,  sc.Input[2].GetColor(), exp.sOP,  "1.000", idS+13);
+        L(exp.vXOP, sc.Input[3].GetColor(), exp.sXOP, "1.618", idS+16);
     };
 
     // --- 7. LOGIKA WYŚWIETLANIA ---
@@ -369,7 +357,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
             int maxR = sc.Input[5].GetInt();
             int limit = min(pData->numSaved, maxR);
             for (int i = 0; i < limit; i++) {
-                DrawExpansionPreformatted(pData->expansions[i], 30000 + (i * 40), true, globalNudgeVal);
+                DrawExpansionPreformatted(pData->expansions[i], 30000 + (i * 40), true);
             }
             LastSize = sc.ArraySize;
             LastLeftIdx = sc.IndexOfFirstVisibleBar;
@@ -384,13 +372,13 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
                 preview.pB = (AType == 2) ? sc.High[snapB] : sc.Low[snapB]; preview.idxB = snapB;
                 preview.pC = preview.pB; preview.idxC = snapB;
                 RefreshExpansionStrings(sc, preview);
-                DrawExpansionPreformatted(preview, 10000, false, globalNudgeVal);
+                DrawExpansionPreformatted(preview, 10000, false);
             } else if (TState == 3) {
                 preview.pB = sc.GetPersistentFloat(11); preview.idxB = sc.GetPersistentInt(21);
                 int snapC = GetSnappedIndex(sc, sIdx, snapRange, (AType == 1));
                 preview.pC = (AType == 1) ? sc.High[snapC] : sc.Low[snapC]; preview.idxC = snapC;
                 RefreshExpansionStrings(sc, preview);
-                DrawExpansionPreformatted(preview, 10000, true, globalNudgeVal);
+                DrawExpansionPreformatted(preview, 10000, true);
             }
         }
     } else {
@@ -402,4 +390,4 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
             LastSize = -2; 
         }
     }
-} 
+}
