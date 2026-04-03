@@ -4,7 +4,7 @@ A Sierra Chart ACSIL study that recreates the DiNapoli expansion tool from Trade
 
 ## Versions
 
-Versions are git tags: `dinapoliabc-v13`, `dinapoliabc-v14`, `dinapoliabc-v15`, `dinapoliabc-v18`, `dinapoliabc-v19`, `dinapoliabc-v19b`.
+Versions are git tags: `dinapoliabc-v13`, `dinapoliabc-v14`, `dinapoliabc-v15`, `dinapoliabc-v18`, `dinapoliabc-v19`, `dinapoliabc-v19b`, `dinapoliabc-v20`.
 
 - **V13**: First saved version: three-click A-B-C expansion tool with 0.618, 1.000 and 1.618 levels, throttled redraw, cached bar indexes and pre-formatted price strings.
 - **V14**: Chart range and the Hide Chart Drawings menu ID computed once instead of on every redraw.
@@ -12,3 +12,4 @@ Versions are git tags: `dinapoliabc-v13`, `dinapoliabc-v14`, `dinapoliabc-v15`, 
 - **V18**: Rings drawn as native hollow-circle subgraphs and a price-scale guard that rejects wrong pixels after a restart.
 - **V19**: Time-windowed bar-based price snap (Search Range Bars) keeps points A, B and C in place after an interval change.
 - **V19b**: Live pixel positions for rings and labels, and expansions whose A-C span is too short on higher timeframes are hidden.
+- **V20**: Binary-safe saved data (packed structs, fixed strings), Min Bars Visibility Threshold input and cached menu ID.

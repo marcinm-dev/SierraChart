@@ -7,19 +7,19 @@ SCDLLName("DiNapoliExpansion")
 // --- STAŁE ARCHITEKTONICZNE ---
 const int GLOBAL_SYNC_SLOT = 9999;           
 
+// 1. BEZPIECZEŃSTWO BINARNE: Wymuszenie braku paddingu w strukturach
+#pragma pack(push, 1)
 struct SavedExpansion {
     float pA, pB, pC;
     SCDateTime tA, tB, tC;
     int aType;
     int idxA, idxB, idxC;
     float vCOP, vOP, vXOP;
-    // Współrzędne 'y' pozostawione w strukturze dla stabilności binarnej, ale nieużywane w logice renderowania
     float yA, yB, yC; 
     float yCOP, yOP, yXOP;
     char sA[32], sB[32], sC[32];
     char sCOP[32], sOP[32], sXOP[32];
     
-    // HOISTED FIELDS (Zoptymalizowane)
     bool isVisibleOnCurrentTF;
     int dwA, dwB, dwC;
     int dwCOP, dwOP, dwXOP;
@@ -29,6 +29,7 @@ struct DiNapoliData {
     SavedExpansion expansions[20];
     int numSaved;
 };
+#pragma pack(pop)
 
 // --- FUNKCJA ODŚWIEŻAJĄCA TEKSTY I GEOMETRIĘ (HOISTED) ---
 void RefreshExpansionStrings(SCStudyInterfaceRef sc, SavedExpansion& exp) {
@@ -42,23 +43,36 @@ void RefreshExpansionStrings(SCStudyInterfaceRef sc, SavedExpansion& exp) {
     SCString t;
     t.Format("A %s", sc.FormatGraphValue(exp.pA, sc.BaseGraphValueFormat).GetChars());
     strncpy(exp.sA, t.GetChars(), 31);
+    exp.sA[31] = '\0'; // 2. ŻELAZNA TERMINACJA
+    exp.dwA = (t.GetLength() / 2) + 2; 
+
     t.Format("B %s", sc.FormatGraphValue(exp.pB, sc.BaseGraphValueFormat).GetChars());
     strncpy(exp.sB, t.GetChars(), 31);
+    exp.sB[31] = '\0'; 
+    exp.dwB = (t.GetLength() / 2) + 2;
+
     t.Format("C %s", sc.FormatGraphValue(exp.pC, sc.BaseGraphValueFormat).GetChars());
     strncpy(exp.sC, t.GetChars(), 31);
+    exp.sC[31] = '\0';
+    exp.dwC = (t.GetLength() / 2) + 2;
 
-    strncpy(exp.sCOP, sc.FormatGraphValue(exp.vCOP, sc.BaseGraphValueFormat).GetChars(), 31);
-    strncpy(exp.sOP,  sc.FormatGraphValue(exp.vOP,  sc.BaseGraphValueFormat).GetChars(), 31);
-    strncpy(exp.sXOP, sc.FormatGraphValue(exp.vXOP, sc.BaseGraphValueFormat).GetChars(), 31);
+    SCString sTemp;
+    sTemp = sc.FormatGraphValue(exp.vCOP, sc.BaseGraphValueFormat);
+    strncpy(exp.sCOP, sTemp.GetChars(), 31);
+    exp.sCOP[31] = '\0';
+    exp.dwCOP = (sTemp.GetLength() / 2) + 1;
 
-    exp.dwA = (strlen(exp.sA) / 2) + 2;
-    exp.dwB = (strlen(exp.sB) / 2) + 2;
-    exp.dwC = (strlen(exp.sC) / 2) + 2;
-    exp.dwCOP = (strlen(exp.sCOP) / 2) + 1;
-    exp.dwOP  = (strlen(exp.sOP) / 2) + 1;
-    exp.dwXOP = (strlen(exp.sXOP) / 2) + 1;
+    sTemp = sc.FormatGraphValue(exp.vOP, sc.BaseGraphValueFormat);
+    strncpy(exp.sOP,  sTemp.GetChars(), 31);
+    exp.sOP[31] = '\0';
+    exp.dwOP = (sTemp.GetLength() / 2) + 1;
 
-    exp.isVisibleOnCurrentTF = (abs(exp.idxC - exp.idxA) >= 3);
+    sTemp = sc.FormatGraphValue(exp.vXOP, sc.BaseGraphValueFormat);
+    strncpy(exp.sXOP, sTemp.GetChars(), 31);
+    exp.sXOP[31] = '\0';
+    exp.dwXOP = (sTemp.GetLength() / 2) + 1;
+
+    exp.isVisibleOnCurrentTF = (abs(exp.idxC - exp.idxA) >= sc.Input[12].GetInt());
 }
 
 // --- DYNAMICZNE WYSZUKIWANIE ID MENU ---
@@ -164,6 +178,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         sc.Input[9].Name = "Przycisk LAST DEL"; sc.Input[9].SetInt(21);
         sc.Input[10].Name = "Przycisk ALL DEL"; sc.Input[10].SetInt(22);
         sc.Input[11].Name = "Search Range Bars"; sc.Input[11].SetInt(10);
+        sc.Input[12].Name = "Min Bars Visibility Threshold"; sc.Input[12].SetInt(3);
 
         return;
     }
@@ -195,6 +210,8 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
     int& LastLeftIdx = sc.GetPersistentInt(16); 
     int snapRange = sc.Input[6].GetInt();
 
+    static int cachedHideMenuID = -1; 
+
     sc.SetCustomStudyControlBarButtonText(DrawBtn, "Expansion");
     sc.SetCustomStudyControlBarButtonText(HideBtn, "HIDE");
     sc.SetCustomStudyControlBarButtonText(LastDelBtn, "LAST DEL");
@@ -207,9 +224,11 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         sc.SetPersistentIntForChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT, newState);
         HWND hRoot = ::GetAncestor((HWND)sc.ChartWindowHandle, GA_ROOT);
         if (hRoot != NULL) {
-            int dynamicID = FindSierraMenuCommandID(hRoot, "Chart", "Hide Chart Drawings");
-            if (dynamicID != -1) ::PostMessage(hRoot, WM_COMMAND, dynamicID, 0);
-            else ::PostMessage(hRoot, WM_COMMAND, 211, 0); 
+            if (cachedHideMenuID == -1) {
+                cachedHideMenuID = FindSierraMenuCommandID(hRoot, "Chart", "Hide Chart Drawings");
+            }
+            int menuIDtoSend = (cachedHideMenuID != -1) ? cachedHideMenuID : 211;
+            ::PostMessage(hRoot, WM_COMMAND, menuIDtoSend, 0);
         }
         sc.SetCustomStudyControlBarButtonEnable(HideBtn, 0); 
         sc.MenuEventID = 0; currentGlobalHide = newState; LastSize = -1; 
@@ -294,10 +313,11 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
 
     // --- 6. REDRAW GATE ---
     bool needsRedraw = (sc.ArraySize != LastSize) || (sc.IndexOfFirstVisibleBar != LastLeftIdx) || (currentGlobalHide != LastSyncValue) || sc.IsFullRecalculation || (TState > 0);
+    bool cacheMissing = false; 
+
     if (currentGlobalHide != LastSyncValue) { LastSyncValue = currentGlobalHide; LastSize = -1; }
 
     if (needsRedraw && IsVisible) {
-        // Czyścimy stare subgrafy punktowo (Sparse Clearing)
         for (int i = 0; i < 20; i++) {
             int sBase = 1 + (i * 3);
             if (pData->expansions[i].idxA >= 0) sc.Subgraph[sBase][pData->expansions[i].idxA] = 0;
@@ -314,12 +334,18 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
 
         int rBound = exp.idxC + 15; if (rBound < sc.IndexOfFirstVisibleBar) return;
 
-        // Pomocnicza funkcja licząca piksel w locie
         auto GetYAdj = [&](float p, bool isHigh) -> float {
             if (!isHigh) return p;
             int pY = sc.RegionValueToYPixelCoordinate(p, sc.GraphRegion);
-            if (pY == 0) return p; // Zwróć cenę jeśli GPU nie gotowe (bezpiecznik)
-            return (float)sc.YPixelCoordinateToGraphValue(pY + 1);
+            if (pY == 0) { cacheMissing = true; return p; } 
+
+            float yResult = (float)sc.YPixelCoordinateToGraphValue(pY + 1);
+
+            if (yResult <= 1.0f || (p > 1.0f && fabsf(yResult - p) / p > 0.20f)) { 
+                cacheMissing = true; 
+                return p; 
+            }
+            return yResult;
         };
 
         auto AnchorPoint = [&](float p, bool isHigh, int idx, const char* label, int id, int subIdx, int dw) {
@@ -363,6 +389,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
             int maxR = sc.Input[5].GetInt(); int limit = min(pData->numSaved, maxR);
             for (int i = 0; i < limit; i++) DrawExpansionPreformatted(pData->expansions[i], 30000 + (i * 40), 1 + (i * 3), true, false);
             LastSize = sc.ArraySize; LastLeftIdx = sc.IndexOfFirstVisibleBar;
+            if (cacheMissing) LastSize = -1; 
         }
         if (TState >= 2) {
             SavedExpansion preview; memset(&preview, 0, sizeof(SavedExpansion));
