@@ -13,10 +13,16 @@ struct SavedExpansion {
     int aType;
     int idxA, idxB, idxC;
     float vCOP, vOP, vXOP;
+    // Współrzędne 'y' pozostawione w strukturze dla stabilności binarnej, ale nieużywane w logice renderowania
     float yA, yB, yC; 
     float yCOP, yOP, yXOP;
     char sA[32], sB[32], sC[32];
     char sCOP[32], sOP[32], sXOP[32];
+    
+    // HOISTED FIELDS (Zoptymalizowane)
+    bool isVisibleOnCurrentTF;
+    int dwA, dwB, dwC;
+    int dwCOP, dwOP, dwXOP;
 };
 
 struct DiNapoliData {
@@ -24,9 +30,10 @@ struct DiNapoliData {
     int numSaved;
 };
 
-// --- FUNKCJA ODŚWIEŻAJĄCA TEKSTY (ZAMROŻONA) ---
+// --- FUNKCJA ODŚWIEŻAJĄCA TEKSTY I GEOMETRIĘ (HOISTED) ---
 void RefreshExpansionStrings(SCStudyInterfaceRef sc, SavedExpansion& exp) {
     if (exp.pA <= 0) return;
+    
     float wave = exp.pB - exp.pA;
     exp.vCOP = sc.RoundToTickSize(exp.pC + (wave * 0.618f));
     exp.vOP  = sc.RoundToTickSize(exp.pC + (wave * 1.000f));
@@ -43,6 +50,15 @@ void RefreshExpansionStrings(SCStudyInterfaceRef sc, SavedExpansion& exp) {
     strncpy(exp.sCOP, sc.FormatGraphValue(exp.vCOP, sc.BaseGraphValueFormat).GetChars(), 31);
     strncpy(exp.sOP,  sc.FormatGraphValue(exp.vOP,  sc.BaseGraphValueFormat).GetChars(), 31);
     strncpy(exp.sXOP, sc.FormatGraphValue(exp.vXOP, sc.BaseGraphValueFormat).GetChars(), 31);
+
+    exp.dwA = (strlen(exp.sA) / 2) + 2;
+    exp.dwB = (strlen(exp.sB) / 2) + 2;
+    exp.dwC = (strlen(exp.sC) / 2) + 2;
+    exp.dwCOP = (strlen(exp.sCOP) / 2) + 1;
+    exp.dwOP  = (strlen(exp.sOP) / 2) + 1;
+    exp.dwXOP = (strlen(exp.sXOP) / 2) + 1;
+
+    exp.isVisibleOnCurrentTF = (abs(exp.idxC - exp.idxA) >= 3);
 }
 
 // --- DYNAMICZNE WYSZUKIWANIE ID MENU ---
@@ -71,20 +87,16 @@ int FindBestMatchIndex(SCStudyInterfaceRef sc, float targetPrice, SCDateTime tar
     int baseIdx = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, targetTime);
     if (baseIdx < 0) return -1;
 
+    int startScan = max(0, baseIdx - searchRangeBars);
+    int endScan = min(sc.ArraySize - 1, baseIdx + searchRangeBars);
     int bestIdx = baseIdx;
     bool foundExactPrice = false;
 
-    int startScan = max(0, baseIdx - searchRangeBars);
-    int endScan = min(sc.ArraySize - 1, baseIdx + searchRangeBars);
-
     for (int i = startScan; i <= endScan; i++) {
         float priceToCheck = isHigh ? sc.High[i] : sc.Low[i];
-        float currentDiff = fabs(priceToCheck - targetPrice);
-
-        if (currentDiff < (sc.TickSize / 2.0f)) {
+        if (fabs(priceToCheck - targetPrice) < (sc.TickSize / 2.0f)) {
             if (!foundExactPrice || abs(i - baseIdx) < abs(bestIdx - baseIdx)) {
-                bestIdx = i;
-                foundExactPrice = true;
+                bestIdx = i; foundExactPrice = true;
             }
         }
     }
@@ -109,27 +121,21 @@ void SaveDiNapoliData(SCStudyInterfaceRef sc, DiNapoliData* pData) {
     SCString filePath;
     filePath.Format("%sDN_Exp_C%d_S%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
     std::ofstream outFile(filePath.GetChars(), std::ios::binary | std::ios::trunc);
-    if (outFile.is_open()) {
-        outFile.write((char*)pData, sizeof(DiNapoliData));
-        outFile.close();
-    }
+    if (outFile.is_open()) { outFile.write((char*)pData, sizeof(DiNapoliData)); outFile.close(); }
 }
 
 void LoadDiNapoliData(SCStudyInterfaceRef sc, DiNapoliData* pData) {
     SCString filePath;
     filePath.Format("%sDN_Exp_C%d_S%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
     std::ifstream inFile(filePath.GetChars(), std::ios::binary);
-    if (inFile.is_open()) {
-        inFile.read((char*)pData, sizeof(DiNapoliData));
-        inFile.close();
-    }
+    if (inFile.is_open()) { inFile.read((char*)pData, sizeof(DiNapoliData)); inFile.close(); }
 }
 
 SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
 {
     // --- 1. KONFIGURACJA (ZAMROŻONA) ---
     if (sc.SetDefaults) {
-        sc.GraphName = "DiNapoli Expansion (v_ULTRA_FINAL_STABLE_V4)";
+        sc.GraphName = "DiNapoli Expansion (v_ULTRA_STABLE_LIVE_PIXELS)";
         sc.GraphRegion = 0; sc.AutoLoop = 0; sc.UpdateAlways = 1;
         sc.ReceivePointerEvents = ACS_RECEIVE_POINTER_EVENTS_WHEN_ACS_BUTTON_ENABLED;
         sc.ReceiveCharacterEvents = 1; 
@@ -143,22 +149,21 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
             sc.Subgraph[i].DrawStyle = DRAWSTYLE_CIRCLE_HOLLOW; 
             sc.Subgraph[i].LineWidth = 5;               
             sc.Subgraph[i].PrimaryColor = RGB(65, 105, 225); 
-            sc.Subgraph[i].DisplayNameValueInWindowsFlags = 0; 
             sc.Subgraph[i].DisplayNameValueInDataLine = 0; 
         }
 
-        sc.Input[0].Name = "Numer Przycisku Rysowania (Expansion)"; sc.Input[0].SetInt(2);
-        sc.Input[1].Name = "Kolor 0.618 (Blue)"; sc.Input[1].SetColor(RGB(0, 0, 255));
-        sc.Input[2].Name = "Kolor 1.000 (Green)"; sc.Input[2].SetColor(RGB(0, 200, 0));
-        sc.Input[3].Name = "Kolor 1.618 (Red)"; sc.Input[3].SetColor(RGB(255, 0, 0));
-        sc.Input[4].Name = "Kolor Pierscieni (Royal Blue)"; sc.Input[4].SetColor(RGB(65, 105, 225));
+        sc.Input[0].Name = "Numer Przycisku Rysowania"; sc.Input[0].SetInt(2);
+        sc.Input[1].Name = "Kolor 0.618"; sc.Input[1].SetColor(RGB(0, 0, 255));
+        sc.Input[2].Name = "Kolor 1.000"; sc.Input[2].SetColor(RGB(0, 200, 0));
+        sc.Input[3].Name = "Kolor 1.618"; sc.Input[3].SetColor(RGB(255, 0, 0));
+        sc.Input[4].Name = "Kolor Pierscieni"; sc.Input[4].SetColor(RGB(65, 105, 225));
         sc.Input[5].Name = "Max Rysunkow"; sc.Input[5].SetInt(20);
-        sc.Input[6].Name = "Snapping Range (Bars)"; sc.Input[6].SetInt(1);
-        sc.Input[7].Name = "Aktywuj Master Toggle na Przycisku"; sc.Input[7].SetYesNo(1);
-        sc.Input[8].Name = "Numer Przycisku HIDE (H)"; sc.Input[8].SetInt(20);
-        sc.Input[9].Name = "Numer Przycisku LAST DEL"; sc.Input[9].SetInt(21);
-        sc.Input[10].Name = "Numer Przycisku ALL DEL (Alt+X)"; sc.Input[10].SetInt(22);
-        sc.Input[11].Name = "TF Change Search Range (Bars)"; sc.Input[11].SetInt(10);
+        sc.Input[6].Name = "Snapping Range"; sc.Input[6].SetInt(1);
+        sc.Input[7].Name = "Aktywuj Master Toggle"; sc.Input[7].SetYesNo(1);
+        sc.Input[8].Name = "Przycisk HIDE"; sc.Input[8].SetInt(20);
+        sc.Input[9].Name = "Przycisk LAST DEL"; sc.Input[9].SetInt(21);
+        sc.Input[10].Name = "Przycisk ALL DEL"; sc.Input[10].SetInt(22);
+        sc.Input[11].Name = "Search Range Bars"; sc.Input[11].SetInt(10);
 
         return;
     }
@@ -168,15 +173,13 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
     if (pData == NULL) {
         pData = (DiNapoliData*)sc.AllocateMemory(sizeof(DiNapoliData));
         memset(pData, 0, sizeof(DiNapoliData));
-        sc.SetPersistentPointer(500, pData);
-        LoadDiNapoliData(sc, pData);
+        sc.SetPersistentPointer(500, pData); LoadDiNapoliData(sc, pData);
     }
 
     s_UseTool* pTool = (s_UseTool*)sc.GetPersistentPointer(501); 
     if (pTool == NULL) {
         pTool = (s_UseTool*)sc.AllocateMemory(sizeof(s_UseTool));
-        memset(pTool, 0, sizeof(s_UseTool));
-        sc.SetPersistentPointer(501, pTool);
+        memset(pTool, 0, sizeof(s_UseTool)); sc.SetPersistentPointer(501, pTool);
     }
 
     int DrawBtn = sc.Input[0].GetInt();
@@ -214,6 +217,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
 
     bool IsVisible = (currentGlobalHide == 0);
 
+    // --- 3. USUWANIE ---
     if (sc.MenuEventID == LastDelBtn) {
         if (pData->numSaved > 0) {
             int lastIdx = pData->numSaved - 1;
@@ -236,24 +240,20 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         sc.MenuEventID = 0;
     }
 
-    // --- 4. INITIAL RESET (USUWA DUCHY PRZY ZMIANIE TF) ---
+    // --- 4. TF STABILITY (ONLY INDEX CACHING) ---
     if (sc.IsFullRecalculation || LastSize == -1) {
-        for (int i = 1; i <= 60; i++) {
-            for (int k = 0; k < sc.ArraySize; k++) sc.Subgraph[i][k] = 0;
-        }
-
+        for (int i = 1; i <= 60; i++) for (int k = 0; k < sc.ArraySize; k++) sc.Subgraph[i][k] = 0;
         for (int i = 0; i < pData->numSaved; i++) {
             if (pData->expansions[i].pA > 0) {
                 pData->expansions[i].idxA = FindBestMatchIndex(sc, pData->expansions[i].pA, pData->expansions[i].tA, (pData->expansions[i].aType == 1), tfSearchRange);
                 pData->expansions[i].idxB = FindBestMatchIndex(sc, pData->expansions[i].pB, pData->expansions[i].tB, (pData->expansions[i].aType != 1), tfSearchRange);
                 pData->expansions[i].idxC = FindBestMatchIndex(sc, pData->expansions[i].pC, pData->expansions[i].tC, (pData->expansions[i].aType == 1), tfSearchRange);
-                pData->expansions[i].yA = 0; // Trigger redraw (szukamy nowych pikseli)
                 RefreshExpansionStrings(sc, pData->expansions[i]);
             }
         }
     }
 
-    // --- 5. INTERACTION & DRAWING ---
+    // --- 5. INTERACTION ---
     if (sc.CharacterEventCode == 32 && TState > 0) {
         for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
         TState = 0; sc.SetCustomStudyControlBarButtonEnable(DrawBtn, 0); LastSize = -1;
@@ -284,144 +284,98 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
                 pData->expansions[s].pC = findHigh ? sc.High[sIdx] : sc.Low[sIdx];
                 pData->expansions[s].tC = sc.BaseDateTimeIn[sIdx]; pData->expansions[s].idxC = sIdx;
                 pData->expansions[s].aType = AType; 
-                pData->expansions[s].yA = 0; // Trigger redraw
                 RefreshExpansionStrings(sc, pData->expansions[s]);
                 for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
-                pData->numSaved++; SaveDiNapoliData(sc, pData); TState = 0; sc.SetCustomStudyControlBarButtonEnable(DrawBtn, 0); 
-                LastSize = -1;
+                pData->numSaved++; SaveDiNapoliData(sc, pData); TState = 0; sc.SetCustomStudyControlBarButtonEnable(DrawBtn, 0); LastSize = -1;
             }
             sc.PointerEventType = 0; 
         }
     }
 
-    // --- 6. CACHE VALIDATION (FIX DLA "ZIMNEGO STARTU") ---
-    bool cacheMissing = false;
-    if (IsVisible) {
-        for (int i = 0; i < pData->numSaved; i++) {
-            // Jeśli pA istnieje, ale yA (piksele) to nadal 0, wymuszamy redraw aż do skutku
-            if (pData->expansions[i].pA > 0 && pData->expansions[i].yA <= 1.0f) {
-                cacheMissing = true; 
-                break;
-            }
-        }
-    }
-
-    bool needsRedraw = (sc.ArraySize != LastSize) || (sc.IndexOfFirstVisibleBar != LastLeftIdx) || (currentGlobalHide != LastSyncValue) || sc.IsFullRecalculation || (TState > 0) || cacheMissing;
+    // --- 6. REDRAW GATE ---
+    bool needsRedraw = (sc.ArraySize != LastSize) || (sc.IndexOfFirstVisibleBar != LastLeftIdx) || (currentGlobalHide != LastSyncValue) || sc.IsFullRecalculation || (TState > 0);
     if (currentGlobalHide != LastSyncValue) { LastSyncValue = currentGlobalHide; LastSize = -1; }
 
-    if (needsRedraw) {
-        // PRECYZYJNE CZYSZCZENIE (Sparse)
+    if (needsRedraw && IsVisible) {
+        // Czyścimy stare subgrafy punktowo (Sparse Clearing)
         for (int i = 0; i < 20; i++) {
-            SavedExpansion& exp = pData->expansions[i];
             int sBase = 1 + (i * 3);
-            if (exp.idxA >= 0 && exp.idxA < sc.ArraySize) sc.Subgraph[sBase][exp.idxA] = 0;
-            if (exp.idxB >= 0 && exp.idxB < sc.ArraySize) sc.Subgraph[sBase+1][exp.idxB] = 0;
-            if (exp.idxC >= 0 && exp.idxC < sc.ArraySize) sc.Subgraph[sBase+2][exp.idxC] = 0;
+            if (pData->expansions[i].idxA >= 0) sc.Subgraph[sBase][pData->expansions[i].idxA] = 0;
+            if (pData->expansions[i].idxB >= 0) sc.Subgraph[sBase+1][pData->expansions[i].idxB] = 0;
+            if (pData->expansions[i].idxC >= 0) sc.Subgraph[sBase+2][pData->expansions[i].idxC] = 0;
         }
-        for (int i = 58; i <= 60; i++) {
-            for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) sc.Subgraph[i][k] = 0;
-        }
+        for (int i = 58; i <= 60; i++) for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) sc.Subgraph[i][k] = 0;
+    }
 
+    // --- 7. RENDERER (LIVE PIXELS & HOISTED STRINGS) ---
+    auto DrawExpansionPreformatted = [&](const SavedExpansion& exp, int idS, int subStart, bool drawLevels, bool isPreview) {
+        if (exp.pA <= 0 || exp.idxA < 0) return;
+        if (!isPreview && !exp.isVisibleOnCurrentTF) return;
+
+        int rBound = exp.idxC + 15; if (rBound < sc.IndexOfFirstVisibleBar) return;
+
+        // Pomocnicza funkcja licząca piksel w locie
         auto GetYAdj = [&](float p, bool isHigh) -> float {
             if (!isHigh) return p;
             int pY = sc.RegionValueToYPixelCoordinate(p, sc.GraphRegion);
-            if (pY == 0) return 0; // Chart not ready
+            if (pY == 0) return p; // Zwróć cenę jeśli GPU nie gotowe (bezpiecznik)
             return (float)sc.YPixelCoordinateToGraphValue(pY + 1);
         };
 
-        for (int i = 0; i < pData->numSaved; i++) {
-            SavedExpansion& exp = pData->expansions[i];
-            if (exp.pA <= 0) continue;
-            float newYA = GetYAdj(exp.pA, (exp.aType == 1));
-            // Zapisujemy do cache tylko gdy GPU zwróciło sensowną wartość (> 1 piksel)
-            if (newYA > 1.0f || (exp.aType != 1)) {
-                exp.yA = newYA;
-                exp.yB = GetYAdj(exp.pB, (exp.aType != 1));
-                exp.yC = GetYAdj(exp.pC, (exp.aType == 1));
-                int pyCOP = sc.RegionValueToYPixelCoordinate(exp.vCOP, sc.GraphRegion); if (pyCOP > 0) exp.yCOP = (float)sc.YPixelCoordinateToGraphValue(pyCOP + 1);
-                int pyOP = sc.RegionValueToYPixelCoordinate(exp.vOP, sc.GraphRegion); if (pyOP > 0) exp.yOP = (float)sc.YPixelCoordinateToGraphValue(pyOP + 1);
-                int pyXOP = sc.RegionValueToYPixelCoordinate(exp.vXOP, sc.GraphRegion); if (pyXOP > 0) exp.yXOP = (float)sc.YPixelCoordinateToGraphValue(pyXOP + 1);
-            }
-        }
-    }
-
-    // --- 7. RENDERER (ZEWNĘTRZNA OCHRONA PRZED CENĄ 0) ---
-    auto DrawExpansionPreformatted = [&](const SavedExpansion& exp, int idS, int subStart, bool drawLevels) {
-        // Blokada rysowania jeśli współrzędne pikselowe są nieprawidłowe (zapobiega pierścieniom na dole)
-        if (exp.pA <= 0 || exp.idxA < 0 || exp.yA <= 1.0f) return;
-        int rightBoundary = exp.idxC + 15; if (rightBoundary < sc.IndexOfFirstVisibleBar) return;
-
-        auto AnchorPoint = [&](float p, float yCached, int idx, const char* labelStr, int id, int subIdx) {
-            // Ostateczny bezpiecznik przed rysowaniem pierścienia na dole wykresu
-            if (yCached <= 1.0f) return;
+        auto AnchorPoint = [&](float p, bool isHigh, int idx, const char* label, int id, int subIdx, int dw) {
+            float yLive = GetYAdj(p, isHigh);
             if (IsVisible && idx >= 0 && idx < sc.ArraySize) {
-                sc.Subgraph[subIdx].PrimaryColor = sc.Input[4].GetColor();
-                sc.Subgraph[subIdx][idx] = yCached; 
+                sc.Subgraph[subIdx].PrimaryColor = sc.Input[4].GetColor(); sc.Subgraph[subIdx][idx] = yLive; 
             }
-            int DW = (strlen(labelStr) / 2) + 2; 
             pTool->Clear(); pTool->AddMethod = UTAM_ADD_OR_ADJUST; pTool->DrawingType = DRAWING_LINE;
-            pTool->AddAsUserDrawnDrawing = 0; pTool->BeginIndex = idx; pTool->EndIndex = idx + DW; pTool->BeginValue = p; pTool->EndValue = p;
+            pTool->AddAsUserDrawnDrawing = 0; pTool->BeginIndex = idx; pTool->EndIndex = idx + dw; pTool->BeginValue = p; pTool->EndValue = p;
             pTool->Color = RGB(0, 0, 0); pTool->LineWidth = 1; pTool->LineNumber = id + 1; sc.UseTool(*pTool);
             pTool->Clear(); pTool->AddMethod = UTAM_ADD_OR_ADJUST; pTool->DrawingType = DRAWING_TEXT;
             pTool->AddAsUserDrawnDrawing = 0; pTool->BeginIndex = idx + 1; pTool->BeginValue = p; pTool->Color = RGB(0, 0, 0);
-            pTool->FontFace = "Arial"; pTool->FontSize = 8; pTool->FontBold = 1; pTool->Text = labelStr;
+            pTool->FontFace = "Arial"; pTool->FontSize = 8; pTool->FontBold = 1; pTool->Text = label;
             pTool->TextAlignment = DT_LEFT | DT_TOP; pTool->LineNumber = id + 2; sc.UseTool(*pTool);
         };
 
-        AnchorPoint(exp.pA, exp.yA, exp.idxA, exp.sA, idS, subStart);
-        AnchorPoint(exp.pB, exp.yB, exp.idxB, exp.sB, idS + 3, subStart + 1);
-        AnchorPoint(exp.pC, exp.yC, exp.idxC, exp.sC, idS + 6, subStart + 2);
+        AnchorPoint(exp.pA, (exp.aType==1), exp.idxA, exp.sA, idS, subStart, exp.dwA);
+        AnchorPoint(exp.pB, (exp.aType!=1), exp.idxB, exp.sB, idS + 3, subStart + 1, exp.dwB);
+        AnchorPoint(exp.pC, (exp.aType==1), exp.idxC, exp.sC, idS + 6, subStart + 2, exp.dwC);
 
         if (!drawLevels) return;
         int sX = exp.idxC + 1;
-        auto L = [&](float p, float yCached, COLORREF c, const char* valStr, const char* ratioLabel, int id) {
-            if (yCached <= 1.0f) return;
-            int DW = (strlen(valStr) / 2) + 1; int eX = sX + DW; int tX = (sX + eX) / 2;
+        auto L = [&](float p, float v, COLORREF c, const char* vS, const char* rL, int id, int dw) {
+            float yLive = GetYAdj(v, true); 
+            int eX = sX + dw; int tX = (sX + eX) / 2;
             pTool->Clear(); pTool->AddMethod = UTAM_ADD_OR_ADJUST; pTool->DrawingType = DRAWING_LINE;
             pTool->AddAsUserDrawnDrawing = 0; pTool->BeginIndex = sX; pTool->EndIndex = eX; pTool->BeginValue = p; pTool->EndValue = p;
             pTool->Color = c; pTool->LineWidth = 1; pTool->LineNumber = id; sc.UseTool(*pTool);
             pTool->Clear(); pTool->AddMethod = UTAM_ADD_OR_ADJUST; pTool->DrawingType = DRAWING_TEXT;
             pTool->AddAsUserDrawnDrawing = 0; pTool->BeginIndex = tX; pTool->BeginValue = p; pTool->Color = c; pTool->FontSize = 8; pTool->FontBold = 1;
-            pTool->FontFace = "Arial"; pTool->Text = valStr; pTool->TextAlignment = DT_CENTER | DT_BOTTOM; pTool->LineNumber = id+1; sc.UseTool(*pTool);
-            pTool->Text = ratioLabel; pTool->BeginValue = yCached; pTool->TextAlignment = DT_CENTER | DT_TOP; pTool->LineNumber = id+2; sc.UseTool(*pTool);
+            pTool->FontFace = "Arial"; pTool->Text = vS; pTool->TextAlignment = DT_CENTER | DT_BOTTOM; pTool->LineNumber = id+1; sc.UseTool(*pTool);
+            pTool->Text = rL; pTool->BeginValue = yLive; pTool->TextAlignment = DT_CENTER | DT_TOP; pTool->LineNumber = id+2; sc.UseTool(*pTool);
         };
-        L(exp.vCOP, exp.yCOP, sc.Input[1].GetColor(), exp.sCOP, "0.618", idS+10);
-        L(exp.vOP,  exp.yOP,  sc.Input[2].GetColor(), exp.sOP,  "1.000", idS+13);
-        L(exp.vXOP, exp.yXOP, sc.Input[3].GetColor(), exp.sXOP, "1.618", idS+16);
+        L(exp.vCOP, exp.vCOP, sc.Input[1].GetColor(), exp.sCOP, "0.618", idS+10, exp.dwCOP);
+        L(exp.vOP,  exp.vOP,  sc.Input[2].GetColor(), exp.sOP,  "1.000", idS+13, exp.dwOP);
+        L(exp.vXOP, exp.vXOP, sc.Input[3].GetColor(), exp.sXOP, "1.618", idS+16, exp.dwXOP);
     };
 
     if (IsVisible) {
         if (needsRedraw && sc.ArraySize > 0) {
             int maxR = sc.Input[5].GetInt(); int limit = min(pData->numSaved, maxR);
-            for (int i = 0; i < limit; i++) DrawExpansionPreformatted(pData->expansions[i], 30000 + (i * 40), 1 + (i * 3), true);
+            for (int i = 0; i < limit; i++) DrawExpansionPreformatted(pData->expansions[i], 30000 + (i * 40), 1 + (i * 3), true, false);
             LastSize = sc.ArraySize; LastLeftIdx = sc.IndexOfFirstVisibleBar;
         }
         if (TState >= 2) {
             SavedExpansion preview; memset(&preview, 0, sizeof(SavedExpansion));
             preview.pA = sc.GetPersistentFloat(10); preview.idxA = sc.GetPersistentInt(20); preview.aType = AType;
-            int sIdx = sc.ActiveToolIndex;
-            auto GetYAdj = [&](float p, bool isHigh) -> float {
-                if (!isHigh) return p;
-                int pY = sc.RegionValueToYPixelCoordinate(p, sc.GraphRegion);
-                if (pY == 0) return 0;
-                return (float)sc.YPixelCoordinateToGraphValue(pY + 1);
-            };
             if (TState == 2) {
-                int snapB = GetSnappedIndex(sc, sIdx, snapRange, (AType == 2));
-                preview.pB = (AType == 2) ? sc.High[snapB] : sc.Low[snapB]; preview.idxB = snapB; preview.pC = preview.pB; preview.idxC = snapB;
-                RefreshExpansionStrings(sc, preview); 
-                preview.yA = GetYAdj(preview.pA, (preview.aType==1)); preview.yB = GetYAdj(preview.pB, (preview.aType!=1));
-                DrawExpansionPreformatted(preview, 10000, 58, false); 
+                int sB = GetSnappedIndex(sc, sc.ActiveToolIndex, snapRange, (AType == 2));
+                preview.pB = (AType == 2) ? sc.High[sB] : sc.Low[sB]; preview.idxB = sB; preview.pC = preview.pB; preview.idxC = sB;
+                RefreshExpansionStrings(sc, preview); DrawExpansionPreformatted(preview, 10000, 58, false, true); 
             } else if (TState == 3) {
                 preview.pB = sc.GetPersistentFloat(11); preview.idxB = sc.GetPersistentInt(21);
-                int snapC = GetSnappedIndex(sc, sIdx, snapRange, (AType == 1));
-                preview.pC = (AType == 1) ? sc.High[snapC] : sc.Low[snapC]; preview.idxC = snapC;
-                RefreshExpansionStrings(sc, preview); 
-                preview.yA = GetYAdj(preview.pA, (preview.aType==1)); preview.yB = GetYAdj(preview.pB, (preview.aType!=1)); preview.yC = GetYAdj(preview.pC, (preview.aType==1));
-                int pyCOP = sc.RegionValueToYPixelCoordinate(preview.vCOP, sc.GraphRegion); if (pyCOP > 0) preview.yCOP = (float)sc.YPixelCoordinateToGraphValue(pyCOP + 1);
-                int pyOP = sc.RegionValueToYPixelCoordinate(preview.vOP, sc.GraphRegion); if (pyOP > 0) preview.yOP = (float)sc.YPixelCoordinateToGraphValue(pyOP + 1);
-                int pyXOP = sc.RegionValueToYPixelCoordinate(preview.vXOP, sc.GraphRegion); if (pyXOP > 0) preview.yXOP = (float)sc.YPixelCoordinateToGraphValue(pyXOP + 1);
-                DrawExpansionPreformatted(preview, 10000, 58, true);
+                int sC = GetSnappedIndex(sc, sc.ActiveToolIndex, snapRange, (AType == 1));
+                preview.pC = (AType == 1) ? sc.High[sC] : sc.Low[sC]; preview.idxC = sC;
+                RefreshExpansionStrings(sc, preview); DrawExpansionPreformatted(preview, 10000, 58, true, true);
             }
         }
     } else {
