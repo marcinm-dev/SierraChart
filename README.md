@@ -8,6 +8,7 @@ Custom studies for [Sierra Chart](https://www.sierrachart.com/) written in ACSIL
 |---|---|---|
 | [ChartInfo](ChartInfo/) | A single header line pinned to a corner of the chart: market date and time, range of the visible bars and a colored bar count. | V6 (`chartinfo-v6`) |
 | [D1BarReplay](D1BarReplay/) | Lets daily and higher-timeframe historical charts show the state of a trading day as of any moment of a Bar Replay. Works on chart data in memory only. | V1 (`d1barreplay-v1`) |
+| [DiNapoliRetracement](DiNapoliRetracement/) | DiNapoli retracement grids drawn with two clicks: a Focus point and one or more Reaction points give the 0.382, 0.618 and 1.000 levels. Has Control Bar buttons. | V3 (`dinapoliretracement-v3`) |
 | [DMA3x3](DMA3x3/) | Displaced Moving Average 3x3 (SMA of the last 3 closes shifted forward by 3 bars) with a Control Bar show/hide button. | V2 (`dma3x3-v2`) |
 
 ## Other tools
