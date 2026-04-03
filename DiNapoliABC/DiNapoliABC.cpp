@@ -66,18 +66,29 @@ int FindSierraMenuCommandID(HWND hRoot, const char* menuName, const char* itemNa
     return -1;
 }
 
-// --- FUNKCJE POMOCNICZE (NIENARUSZONE) ---
-int FindBestMatchIndex(SCStudyInterfaceRef sc, float targetPrice, SCDateTime targetTime, bool isHigh) {
+// --- FUNKCJA DOPASOWANIA (BAR-BASED RANGE) ---
+int FindBestMatchIndex(SCStudyInterfaceRef sc, float targetPrice, SCDateTime targetTime, bool isHigh, int searchRangeBars) {
     int baseIdx = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, targetTime);
     if (baseIdx < 0) return -1;
-    int searchRange = 10;
-    int startIdx = max(0, baseIdx - searchRange);
-    int endIdx = min(sc.ArraySize - 1, baseIdx + searchRange);
-    for (int i = startIdx; i <= endIdx; i++) {
+
+    int bestIdx = baseIdx;
+    bool foundExactPrice = false;
+
+    int startScan = max(0, baseIdx - searchRangeBars);
+    int endScan = min(sc.ArraySize - 1, baseIdx + searchRangeBars);
+
+    for (int i = startScan; i <= endScan; i++) {
         float priceToCheck = isHigh ? sc.High[i] : sc.Low[i];
-        if (fabs(priceToCheck - targetPrice) < (sc.TickSize / 2.0f)) return i; 
+        float currentDiff = fabs(priceToCheck - targetPrice);
+
+        if (currentDiff < (sc.TickSize / 2.0f)) {
+            if (!foundExactPrice || abs(i - baseIdx) < abs(bestIdx - baseIdx)) {
+                bestIdx = i;
+                foundExactPrice = true;
+            }
+        }
     }
-    return baseIdx; 
+    return bestIdx; 
 }
 
 int GetSnappedIndex(SCStudyInterfaceRef sc, int mouseIdx, int range, bool findHigh) {
@@ -116,9 +127,9 @@ void LoadDiNapoliData(SCStudyInterfaceRef sc, DiNapoliData* pData) {
 
 SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
 {
-    // --- 1. KONFIGURACJA ---
+    // --- 1. KONFIGURACJA (ZAMROŻONA) ---
     if (sc.SetDefaults) {
-        sc.GraphName = "DiNapoli Expansion (v_ULTRA_FINAL_STABLE_V3)";
+        sc.GraphName = "DiNapoli Expansion (v_ULTRA_FINAL_STABLE_V4)";
         sc.GraphRegion = 0; sc.AutoLoop = 0; sc.UpdateAlways = 1;
         sc.ReceivePointerEvents = ACS_RECEIVE_POINTER_EVENTS_WHEN_ACS_BUTTON_ENABLED;
         sc.ReceiveCharacterEvents = 1; 
@@ -147,6 +158,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         sc.Input[8].Name = "Numer Przycisku HIDE (H)"; sc.Input[8].SetInt(20);
         sc.Input[9].Name = "Numer Przycisku LAST DEL"; sc.Input[9].SetInt(21);
         sc.Input[10].Name = "Numer Przycisku ALL DEL (Alt+X)"; sc.Input[10].SetInt(22);
+        sc.Input[11].Name = "TF Change Search Range (Bars)"; sc.Input[11].SetInt(10);
 
         return;
     }
@@ -171,6 +183,8 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
     int HideBtn = sc.Input[8].GetInt();
     int LastDelBtn = sc.Input[9].GetInt();
     int AllDelBtn = sc.Input[10].GetInt();
+    int tfSearchRange = sc.Input[11].GetInt();
+
     int& TState = sc.GetPersistentInt(1); 
     int& LastSize = sc.GetPersistentInt(4);
     int& AType = sc.GetPersistentInt(12);
@@ -222,7 +236,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         sc.MenuEventID = 0;
     }
 
-    // --- 4. REFRESH INDEXES ---
+    // --- 4. INITIAL RESET (USUWA DUCHY PRZY ZMIANIE TF) ---
     if (sc.IsFullRecalculation || LastSize == -1) {
         for (int i = 1; i <= 60; i++) {
             for (int k = 0; k < sc.ArraySize; k++) sc.Subgraph[i][k] = 0;
@@ -230,10 +244,10 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
 
         for (int i = 0; i < pData->numSaved; i++) {
             if (pData->expansions[i].pA > 0) {
-                pData->expansions[i].idxA = FindBestMatchIndex(sc, pData->expansions[i].pA, pData->expansions[i].tA, (pData->expansions[i].aType == 1));
-                pData->expansions[i].idxB = FindBestMatchIndex(sc, pData->expansions[i].pB, pData->expansions[i].tB, (pData->expansions[i].aType != 1));
-                pData->expansions[i].idxC = FindBestMatchIndex(sc, pData->expansions[i].pC, pData->expansions[i].tC, (pData->expansions[i].aType == 1));
-                pData->expansions[i].yA = 0; // Wymuszamy reinicjalizację Cache'u Y po restarcie
+                pData->expansions[i].idxA = FindBestMatchIndex(sc, pData->expansions[i].pA, pData->expansions[i].tA, (pData->expansions[i].aType == 1), tfSearchRange);
+                pData->expansions[i].idxB = FindBestMatchIndex(sc, pData->expansions[i].pB, pData->expansions[i].tB, (pData->expansions[i].aType != 1), tfSearchRange);
+                pData->expansions[i].idxC = FindBestMatchIndex(sc, pData->expansions[i].pC, pData->expansions[i].tC, (pData->expansions[i].aType == 1), tfSearchRange);
+                pData->expansions[i].yA = 0; // Trigger redraw (szukamy nowych pikseli)
                 RefreshExpansionStrings(sc, pData->expansions[i]);
             }
         }
@@ -280,10 +294,11 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         }
     }
 
-    // --- 6. CACHE VALIDATION (FIX DLA RESTARTU) ---
+    // --- 6. CACHE VALIDATION (FIX DLA "ZIMNEGO STARTU") ---
     bool cacheMissing = false;
     if (IsVisible) {
         for (int i = 0; i < pData->numSaved; i++) {
+            // Jeśli pA istnieje, ale yA (piksele) to nadal 0, wymuszamy redraw aż do skutku
             if (pData->expansions[i].pA > 0 && pData->expansions[i].yA <= 1.0f) {
                 cacheMissing = true; 
                 break;
@@ -318,6 +333,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
             SavedExpansion& exp = pData->expansions[i];
             if (exp.pA <= 0) continue;
             float newYA = GetYAdj(exp.pA, (exp.aType == 1));
+            // Zapisujemy do cache tylko gdy GPU zwróciło sensowną wartość (> 1 piksel)
             if (newYA > 1.0f || (exp.aType != 1)) {
                 exp.yA = newYA;
                 exp.yB = GetYAdj(exp.pB, (exp.aType != 1));
@@ -329,12 +345,14 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         }
     }
 
-    // --- 7. RENDERER ---
+    // --- 7. RENDERER (ZEWNĘTRZNA OCHRONA PRZED CENĄ 0) ---
     auto DrawExpansionPreformatted = [&](const SavedExpansion& exp, int idS, int subStart, bool drawLevels) {
+        // Blokada rysowania jeśli współrzędne pikselowe są nieprawidłowe (zapobiega pierścieniom na dole)
         if (exp.pA <= 0 || exp.idxA < 0 || exp.yA <= 1.0f) return;
         int rightBoundary = exp.idxC + 15; if (rightBoundary < sc.IndexOfFirstVisibleBar) return;
 
         auto AnchorPoint = [&](float p, float yCached, int idx, const char* labelStr, int id, int subIdx) {
+            // Ostateczny bezpiecznik przed rysowaniem pierścienia na dole wykresu
             if (yCached <= 1.0f) return;
             if (IsVisible && idx >= 0 && idx < sc.ArraySize) {
                 sc.Subgraph[subIdx].PrimaryColor = sc.Input[4].GetColor();
