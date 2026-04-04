@@ -76,6 +76,10 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         sc.GraphName = "DiNapoli Retracement v_ULTRA_STABLE";
         sc.GraphRegion = 0; sc.AutoLoop = 0; sc.UpdateAlways = 1; 
         sc.ReceivePointerEvents = ACS_RECEIVE_POINTER_EVENTS_WHEN_ACS_BUTTON_ENABLED;
+        
+        // --- Etap 1: Konfiguracja zdarzeniowa ---
+        sc.ReceiveCharacterEvents = 1; 
+
         sc.Subgraph[0].Name = "Heartbeat Sync"; sc.Subgraph[0].DrawStyle = DRAWSTYLE_HIDDEN;
 
         sc.Input[0].Name = "Numer Przycisku Retracement"; sc.Input[0].SetInt(1); 
@@ -119,7 +123,6 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
     int& KeyLock = sc.GetPersistentInt(8); 
     int& LastSyncValue = sc.GetPersistentInt(15); 
 
-    // --- PROTOKÓŁ WSPÓŁDZIELONEGO IMPULSU (INWERSJA PREDYKCYJNA) ---
     bool syncEnabled = sc.Input[7].GetYesNo();
     int masterHideBtn = sc.Input[8].GetInt();
     bool IsVisible = true;
@@ -127,27 +130,34 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
 
     if (syncEnabled) {
         currentGlobalHide = sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT);
-        
-        // KANAŁ A: Impuls (Zero-Lag) + Inwersja Predykcyjna
         if (sc.MenuEventID == masterHideBtn) {
-            // Jeśli Master jest niżej na liście, slot 9999 jeszcze się nie zmienił.
-            // Przewidujemy zmianę stanu negując obecną wartość pamięci.
-            if (currentGlobalHide == LastSyncValue) {
-                IsVisible = (currentGlobalHide != 0); 
-            } else {
-                // Master już zaktualizował pamięć (jest wyżej na liście).
-                IsVisible = (currentGlobalHide == 0);
-            }
-            LastSize = -1; // Wymuszenie natychmiastowego przerysowania
-        } else {
-            // Standardowa synchronizacja stanu (Kanał B)
-            IsVisible = (currentGlobalHide == 0);
+            if (currentGlobalHide == LastSyncValue) { IsVisible = (currentGlobalHide != 0); } 
+            else { IsVisible = (currentGlobalHide == 0); }
+            LastSize = -1; 
+        } else { IsVisible = (currentGlobalHide == 0); }
+        if (currentGlobalHide != LastSyncValue) { LastSyncValue = currentGlobalHide; LastSize = -1; }
+    }
+
+    // --- ETAPY 2, 3, 4 & 5: Natychmiastowa Spacja (Filar Interakcji i Stabilizacji) ---
+    if (sc.CharacterEventCode == 32 && TState > 0) 
+    {
+        // ETAP 3: Atomic Cleanup (Rysunki i Subgrafy)
+        for(int id = 10000; id <= 10050; id++) {
+            sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
         }
 
-        if (currentGlobalHide != LastSyncValue) { 
-            LastSyncValue = currentGlobalHide; 
-            LastSize = -1; 
+        for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) {
+            sc.Subgraph[59][k] = 0;
+            sc.Subgraph[60][k] = 0;
         }
+
+        // ETAP 4: Reset Maszyny Stanów i UI
+        TState = 0; 
+        LastSize = -1; 
+        sc.SetCustomStudyControlBarButtonEnable(Btn, 0); 
+
+        // ETAP 5: Konsumpcja zdarzenia i finalizacja cyklu
+        sc.CharacterEventCode = 0; 
     }
 
     bool cacheMissing = false;
@@ -167,10 +177,9 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         }
     }
 
-    // --- LOGIKA KLAWIATURY, MYSZY I TRAILINGU ---
     if (sc.ChartWindowIsActive) {
-        bool CtrlD = (GetAsyncKeyState(VK_CONTROL) & 0x8000), XD = (GetAsyncKeyState('X') & 0x8000), SpaceD = (GetAsyncKeyState(VK_SPACE) & 0x8000);
-        if (!XD && !SpaceD) KeyLock = 0;
+        bool CtrlD = (GetAsyncKeyState(VK_CONTROL) & 0x8000), XD = (GetAsyncKeyState('X') & 0x8000);
+        if (!XD) KeyLock = 0;
         if (KeyLock == 0) {
             if (CtrlD && XD) { 
                 for(int id = 10000; id <= 10025; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
@@ -180,10 +189,6 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
                 }
                 pData->numSaved = 0; SaveDiNapoliData(sc, pData); TState = 0; SessionSteps = 0; LastSize = -1; KeyLock = 1;
                 sc.SetCustomStudyControlBarButtonEnable(Btn, 0); needsRedraw = true;
-            }
-            else if (SpaceD && TState > 0) {
-                for(int id = 10000; id <= 10025; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
-                TState = 0; sc.SetCustomStudyControlBarButtonEnable(Btn, 0); KeyLock = 1; needsRedraw = true;
             }
         }
     }
@@ -243,7 +248,8 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
             p_T->Text = n; p_T->TextAlignment = DT_CENTER | DT_TOP; p_T->LineNumber = id + 2; sc.UseTool(*p_T);
         };
         L(r.pR, sc.Input[3].GetColor(), "1.000", r.idxR, idS + 3, 2, r.s100);
-        float rng = r.pF - r.pR; float v38 = sc.RoundToTickSize(r.pF - rng * 0.382f);
+        float rng = r.pF - r.pR; 
+        float v38 = sc.RoundToTickSize(r.pF - rng * 0.382f);
         L(v38, sc.Input[1].GetColor(), "0.382", sX, idS + 6, 1, r.s38);
         L(sc.RoundToTickSize(r.pF - rng * 0.618f), sc.Input[2].GetColor(), "0.618", sX, idS + 9, 1, r.s61);
         p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; p_T->LineStyle = LINESTYLE_DOT; 
