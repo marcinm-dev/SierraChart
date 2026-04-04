@@ -17,7 +17,7 @@ struct SavedRetracement {
     int oldIdxF, oldIdxR;    
     
     char s38[32], s61[32], s100[32];
-    int dw100;               
+    int dw38, dw61, dw100;               
 };
 
 struct DiNapoliData {
@@ -63,11 +63,18 @@ void RefreshRetracementStrings(SCStudyInterfaceRef sc, SavedRetracement& ret) {
     t = sc.FormatGraphValue(ret.pR, sc.BaseGraphValueFormat);
     strncpy(ret.s100, t.GetChars(), 31); ret.s100[31] = '\0'; 
     ret.dw100 = (t.GetLength() / 2) + 1; 
+
     float rng = ret.pF - ret.pR;
     float v38 = sc.RoundToTickSize(ret.pF - rng * 0.382f);
     float v61 = sc.RoundToTickSize(ret.pF - rng * 0.618f);
-    t = sc.FormatGraphValue(v38, sc.BaseGraphValueFormat); strncpy(ret.s38, t.GetChars(), 31); ret.s38[31] = '\0';
-    t = sc.FormatGraphValue(v61, sc.BaseGraphValueFormat); strncpy(ret.s61, t.GetChars(), 31); ret.s61[31] = '\0';
+    
+    t = sc.FormatGraphValue(v38, sc.BaseGraphValueFormat); 
+    strncpy(ret.s38, t.GetChars(), 31); ret.s38[31] = '\0';
+    ret.dw38 = (t.GetLength() / 2) + 1;
+
+    t = sc.FormatGraphValue(v61, sc.BaseGraphValueFormat); 
+    strncpy(ret.s61, t.GetChars(), 31); ret.s61[31] = '\0';
+    ret.dw61 = (t.GetLength() / 2) + 1;
 }
 
 SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
@@ -76,8 +83,6 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         sc.GraphName = "DiNapoli Retracement v_ULTRA_STABLE";
         sc.GraphRegion = 0; sc.AutoLoop = 0; sc.UpdateAlways = 1; 
         sc.ReceivePointerEvents = ACS_RECEIVE_POINTER_EVENTS_WHEN_ACS_BUTTON_ENABLED;
-        
-        // --- Etap 1: Konfiguracja zdarzeniowa ---
         sc.ReceiveCharacterEvents = 1; 
 
         sc.Subgraph[0].Name = "Heartbeat Sync"; sc.Subgraph[0].DrawStyle = DRAWSTYLE_HIDDEN;
@@ -138,30 +143,19 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         if (currentGlobalHide != LastSyncValue) { LastSyncValue = currentGlobalHide; LastSize = -1; }
     }
 
-    // --- ETAPY 2, 3, 4 & 5: Natychmiastowa Spacja (Filar Interakcji i Stabilizacji) ---
     if (sc.CharacterEventCode == 32 && TState > 0) 
     {
-        // ETAP 3: Atomic Cleanup (Rysunki i Subgrafy)
-        for(int id = 10000; id <= 10050; id++) {
-            sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
-        }
-
+        for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
         for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) {
-            sc.Subgraph[59][k] = 0;
-            sc.Subgraph[60][k] = 0;
+            sc.Subgraph[59][k] = 0; sc.Subgraph[60][k] = 0;
         }
-
-        // ETAP 4: Reset Maszyny Stanów i UI
-        TState = 0; 
-        LastSize = -1; 
+        TState = 0; LastSize = -1; 
         sc.SetCustomStudyControlBarButtonEnable(Btn, 0); 
-
-        // ETAP 5: Konsumpcja zdarzenia i finalizacja cyklu
         sc.CharacterEventCode = 0; 
     }
 
-    bool cacheMissing = false;
     bool needsRedraw = (sc.ArraySize != LastSize || sc.IsFullRecalculation);
+    bool cacheMissing = false;
 
     if (sc.IsFullRecalculation || LastSize == -1) {
         for (int i = 1; i <= 60; i++) for (int k = 0; k < sc.ArraySize; k++) sc.Subgraph[i][k] = 0;
@@ -227,7 +221,10 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         int pY = sc.RegionValueToYPixelCoordinate(p, sc.GraphRegion);
         if (pY == 0) { cacheMissing = true; return p; } 
         float yResult = (float)sc.YPixelCoordinateToGraphValue(pY + 1);
-        return (yResult <= 1.0f || (p > 1.0f && fabsf(yResult - p) / p > 0.20f)) ? (cacheMissing = true, p) : yResult;
+        if (yResult <= 1.0f || (p > 1.0f && fabsf(yResult - p) / p > 0.20f)) { 
+            cacheMissing = true; return p; 
+        }
+        return yResult;
     };
 
     auto DrawSet = [&](const SavedRetracement& r, int idS, int drawingIdx) {
@@ -239,29 +236,51 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
             sc.Subgraph[subF][r.idxF] = yFP; sc.Subgraph[subR][r.idxR] = yRP;
             if (drawingIdx < 30) { pData->retracements[drawingIdx].oldIdxF = r.idxF; pData->retracements[drawingIdx].oldIdxR = r.idxR; }
         }
-        int sX = sc.ArraySize + (r.step * r.dw100), eX = sX + r.dw100, tX = (sX + eX) / 2;
-        auto L = [&](float p, COLORREF c, const char* n, int stIdx, int id, int w, const char* label) {
-            p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; p_T->LineStyle = LINESTYLE_SOLID;
-            p_T->BeginIndex = stIdx; p_T->EndIndex = eX; p_T->BeginValue = p; p_T->EndValue = p; p_T->Color = c; p_T->LineWidth = w; p_T->LineNumber = id; sc.UseTool(*p_T);
-            p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_TEXT; p_T->BeginIndex = tX; p_T->BeginValue = p;
-            p_T->Color = c; p_T->FontSize = 8; p_T->FontBold = 1; p_T->Text = label; p_T->TextAlignment = DT_CENTER | DT_BOTTOM; p_T->LineNumber = id + 1; sc.UseTool(*p_T);
-            p_T->Text = n; p_T->TextAlignment = DT_CENTER | DT_TOP; p_T->LineNumber = id + 2; sc.UseTool(*p_T);
+        
+        int sX = sc.ArraySize + (r.step * r.dw100);
+        int connX = sX + r.dw100;
+
+        auto L = [&](float p, float v, COLORREF c, const char* n, int lineStartIdx, int id, int w, const char* label, int textIdx, int lineEndIdx) {
+            float yLive = GetYAdj(v, true); 
+
+            p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; 
+            p_T->AddAsUserDrawnDrawing = 0; p_T->LineStyle = LINESTYLE_SOLID;
+            p_T->BeginIndex = lineStartIdx; p_T->EndIndex = lineEndIdx; p_T->BeginValue = p; p_T->EndValue = p; 
+            p_T->Color = c; p_T->LineWidth = w; p_T->LineNumber = id; sc.UseTool(*p_T);
+
+            p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_TEXT; 
+            p_T->AddAsUserDrawnDrawing = 0; p_T->BeginIndex = textIdx; p_T->BeginValue = p; 
+            p_T->Color = c; p_T->FontFace = "Arial"; p_T->FontSize = 8; p_T->FontBold = 1; p_T->Text = label; 
+            p_T->TextAlignment = DT_CENTER | DT_BOTTOM; p_T->LineNumber = id + 1; sc.UseTool(*p_T);
+
+            p_T->Text = n; p_T->BeginValue = yLive; 
+            p_T->TextAlignment = DT_CENTER | DT_TOP; p_T->LineNumber = id + 2; sc.UseTool(*p_T);
         };
-        L(r.pR, sc.Input[3].GetColor(), "1.000", r.idxR, idS + 3, 2, r.s100);
+
+        // --- POPRAWKA: Etykiety 1.000 wyśrodkowane w kolumnie (textIdx = środek kolumny) ---
+        int tX = (sX + connX) / 2;
+        L(r.pR, r.pR, sc.Input[3].GetColor(), "1.000", r.idxR, idS + 3, 2, r.s100, tX, connX);
+        
         float rng = r.pF - r.pR; 
         float v38 = sc.RoundToTickSize(r.pF - rng * 0.382f);
-        L(v38, sc.Input[1].GetColor(), "0.382", sX, idS + 6, 1, r.s38);
-        L(sc.RoundToTickSize(r.pF - rng * 0.618f), sc.Input[2].GetColor(), "0.618", sX, idS + 9, 1, r.s61);
-        p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; p_T->LineStyle = LINESTYLE_DOT; 
-        p_T->BeginIndex = eX; p_T->EndIndex = eX; p_T->BeginValue = r.pR; p_T->EndValue = v38; p_T->Color = RGB(160, 160, 160); p_T->LineNumber = idS + 12; sc.UseTool(*p_T);
+        float v61 = sc.RoundToTickSize(r.pF - rng * 0.618f);
+        
+        // Zniesienia startują w sX i mają tę samą szerokość kolumny (dw100) dla spójności bloku
+        L(v38, v38, sc.Input[1].GetColor(), "0.382", sX, idS + 6, 1, r.s38, tX, connX);
+        L(v61, v61, sc.Input[2].GetColor(), "0.618", sX, idS + 9, 1, r.s61, tX, connX);
+
+        p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; 
+        p_T->AddAsUserDrawnDrawing = 0; p_T->LineStyle = LINESTYLE_DOT; 
+        p_T->BeginIndex = connX; p_T->EndIndex = connX; p_T->BeginValue = r.pR; p_T->EndValue = v38; 
+        p_T->Color = RGB(160, 160, 160); p_T->LineNumber = idS + 12; sc.UseTool(*p_T);
     };
 
     if (IsVisible) {
-        if (needsRedraw || cacheMissing || TState == 2) {
+        if (needsRedraw || TState == 2) {
             for (int i = 0; i < 30; i++) { sc.Subgraph[i*2+1][pData->retracements[i].oldIdxF] = 0; sc.Subgraph[i*2+2][pData->retracements[i].oldIdxR] = 0; }
             for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) { sc.Subgraph[59][k] = 0; sc.Subgraph[60][k] = 0; }
             for (int i = 0; i < pData->numSaved; i++) DrawSet(pData->retracements[i], 20000+(i * 20), i);
-            LastSize = sc.ArraySize;
+            LastSize = sc.ArraySize; if (cacheMissing) LastSize = -1; 
         }
     } else {
         if (LastSize != -2) {
