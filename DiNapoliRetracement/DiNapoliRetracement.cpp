@@ -4,7 +4,10 @@
 
 SCDLLName("DiNapoliRetracement")
 
+// --- STAŁE ARCHITEKTONICZNE ---
 const int GLOBAL_SYNC_SLOT = 9999;
+#define RETR_BASE_ID 40000
+#define SLOT_SIZE 40
 
 #pragma pack(push, 1)
 struct SavedRetracement {
@@ -21,7 +24,7 @@ struct SavedRetracement {
 };
 
 struct DiNapoliData {
-    SavedRetracement retracements[30]; 
+    SavedRetracement retracements[20]; 
     int numSaved;
 };
 #pragma pack(pop)
@@ -92,10 +95,11 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         sc.Input[2].Name = "Kolor 0.618 (Pink)"; sc.Input[2].SetColor(RGB(255, 0, 255)); 
         sc.Input[3].Name = "Kolor 1.000 (Black)"; sc.Input[3].SetColor(RGB(0, 0, 0)); 
         sc.Input[4].Name = "Kolor Pierscieni (Royal Blue)"; sc.Input[4].SetColor(RGB(65, 105, 225)); 
-        sc.Input[5].Name = "Max Rysunkow"; sc.Input[5].SetInt(30);
+        sc.Input[5].Name = "Max Rysunkow"; sc.Input[5].SetInt(20); 
         sc.Input[6].Name = "Search Range Bars (TF Stability)"; sc.Input[6].SetInt(10);
         sc.Input[7].Name = "Sync z Master HIDE (Button 20)"; sc.Input[7].SetYesNo(1);
         sc.Input[8].Name = "Master Hide Button ID"; sc.Input[8].SetInt(20);
+        sc.Input[9].Name = "Przycisk RETR DEL"; sc.Input[9].SetInt(23); 
 
         for (int i = 1; i <= 60; i++) {
             sc.Subgraph[i].Name.Format("Ring %d", i); sc.Subgraph[i].DrawStyle = DRAWSTYLE_CIRCLE_HOLLOW; 
@@ -120,12 +124,13 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
     }
 
     int Btn = sc.Input[0].GetInt();
+    int RetrDelBtn = sc.Input[9].GetInt(); 
     sc.SetCustomStudyControlBarButtonText(Btn, "DiNapoli");
+    sc.SetCustomStudyControlBarButtonText(RetrDelBtn, "RETR DEL"); 
 
     int& TState = sc.GetPersistentInt(1); 
     int& LastSize = sc.GetPersistentInt(4); 
     int& SessionSteps = sc.GetPersistentInt(3); 
-    int& KeyLock = sc.GetPersistentInt(8); 
     int& LastSyncValue = sc.GetPersistentInt(15); 
 
     bool syncEnabled = sc.Input[7].GetYesNo();
@@ -143,6 +148,26 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         if (currentGlobalHide != LastSyncValue) { LastSyncValue = currentGlobalHide; LastSize = -1; }
     }
 
+    // --- LOGIKA ATOMIC RESET (RETR DEL) [Etap 3] ---
+    if (sc.MenuEventID == RetrDelBtn) {
+        for (int i = 0; i < 20; i++) {
+            for (int j = 0; j < SLOT_SIZE; j++) {
+                sc.DeleteACSChartDrawing(sc.ChartNumber, 0, RETR_BASE_ID + (i * SLOT_SIZE) + j);
+            }
+        }
+        for (int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
+        for (int i = 1; i <= 60; i++) {
+            for (int k = 0; k < sc.ArraySize; k++) sc.Subgraph[i][k] = 0;
+        }
+        memset(pData, 0, sizeof(DiNapoliData));
+        TState = 0; SessionSteps = 0; LastSize = -1; 
+        SaveDiNapoliData(sc, pData);
+        sc.SetCustomStudyControlBarButtonEnable(Btn, 0); 
+        sc.SetCustomStudyControlBarButtonEnable(RetrDelBtn, 0); 
+        sc.MenuEventID = 0; 
+    }
+
+    // --- LOGIKA KLAWISZA SPACE (Anulowanie podglądu) [Etap 5 Audit] ---
     if (sc.CharacterEventCode == 32 && TState > 0) 
     {
         for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
@@ -171,21 +196,7 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         }
     }
 
-    if (sc.ChartWindowIsActive) {
-        bool CtrlD = (GetAsyncKeyState(VK_CONTROL) & 0x8000), XD = (GetAsyncKeyState('X') & 0x8000);
-        if (!XD) KeyLock = 0;
-        if (KeyLock == 0) {
-            if (CtrlD && XD) { 
-                for(int id = 10000; id <= 10025; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
-                for(int i = 0; i < pData->numSaved; i++) {
-                    for(int j = 0; j < 20; j++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, 20000 + (i * 20) + j);
-                    sc.Subgraph[i*2+1][pData->retracements[i].oldIdxF] = 0; sc.Subgraph[i*2+2][pData->retracements[i].oldIdxR] = 0;
-                }
-                pData->numSaved = 0; SaveDiNapoliData(sc, pData); TState = 0; SessionSteps = 0; LastSize = -1; KeyLock = 1;
-                sc.SetCustomStudyControlBarButtonEnable(Btn, 0); needsRedraw = true;
-            }
-        }
-    }
+    // --- WYCIĘTO LEGACY KEYBOARD LOGIC (Etap 5) ---
 
     if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == Btn) { TState = 1; SessionSteps = 0; }
     int cIdx = sc.ActiveToolIndex; float mY = (float)sc.ActiveToolYValue;
@@ -193,14 +204,15 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         float sP = (TState == 1) ? ((fabs(mY - sc.High[cIdx]) < fabs(mY - sc.Low[cIdx])) ? sc.High[cIdx] : sc.Low[cIdx]) : ((mY < sc.GetPersistentFloat(10)) ? sc.Low[cIdx] : sc.High[cIdx]);
         if (TState == 1) { sc.GetPersistentFloat(10) = sP; sc.GetPersistentSCDateTime(10) = sc.BaseDateTimeIn[cIdx]; sc.GetPersistentInt(11) = (sP == sc.High[cIdx] ? 1 : 2); TState = 2; }
         else if (TState == 2) {
-            int s = pData->numSaved % 30;
+            int s = pData->numSaved % 20; 
             pData->retracements[s].pF = sc.GetPersistentFloat(10); pData->retracements[s].tF = sc.GetPersistentSCDateTime(10);
             pData->retracements[s].pR = sP; pData->retracements[s].tR = sc.BaseDateTimeIn[cIdx];
             pData->retracements[s].type = sc.GetPersistentInt(11); pData->retracements[s].step = SessionSteps;
             pData->retracements[s].idxF = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, pData->retracements[s].tF); pData->retracements[s].idxR = cIdx;
             pData->retracements[s].oldIdxF = pData->retracements[s].idxF; pData->retracements[s].oldIdxR = pData->retracements[s].idxR;
             pData->retracements[s].lastCheckedIdx = sc.ArraySize - 1; RefreshRetracementStrings(sc, pData->retracements[s]);
-            if (pData->numSaved < 30) pData->numSaved++; SaveDiNapoliData(sc, pData); SessionSteps++; LastSize = -1; needsRedraw = true;
+            if (pData->numSaved < 20) pData->numSaved++; 
+            SaveDiNapoliData(sc, pData); SessionSteps++; LastSize = -1; needsRedraw = true;
         }
         sc.PointerEventType = 0;
     }
@@ -234,7 +246,7 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         if (IsVisible && subR <= 60) {
             sc.Subgraph[subF].PrimaryColor = sc.Input[4].GetColor(); sc.Subgraph[subR].PrimaryColor = sc.Input[4].GetColor();
             sc.Subgraph[subF][r.idxF] = yFP; sc.Subgraph[subR][r.idxR] = yRP;
-            if (drawingIdx < 30) { pData->retracements[drawingIdx].oldIdxF = r.idxF; pData->retracements[drawingIdx].oldIdxR = r.idxR; }
+            if (drawingIdx < 20) { pData->retracements[drawingIdx].oldIdxF = r.idxF; pData->retracements[drawingIdx].oldIdxR = r.idxR; }
         }
         
         int sX = sc.ArraySize + (r.step * r.dw100);
@@ -257,15 +269,13 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
             p_T->TextAlignment = DT_CENTER | DT_TOP; p_T->LineNumber = id + 2; sc.UseTool(*p_T);
         };
 
-        // --- POPRAWKA: Etykiety 1.000 wyśrodkowane w kolumnie (textIdx = środek kolumny) ---
         int tX = (sX + connX) / 2;
         L(r.pR, r.pR, sc.Input[3].GetColor(), "1.000", r.idxR, idS + 3, 2, r.s100, tX, connX);
         
         float rng = r.pF - r.pR; 
-        float v38 = sc.RoundToTickSize(r.pF - rng * 0.382f);
-        float v61 = sc.RoundToTickSize(r.pF - rng * 0.618f);
+        float v38 = sc.RoundToTickSize(r.pF - rng * 0.382f); 
+        float v61 = sc.RoundToTickSize(r.pF - rng * 0.618f); 
         
-        // Zniesienia startują w sX i mają tę samą szerokość kolumny (dw100) dla spójności bloku
         L(v38, v38, sc.Input[1].GetColor(), "0.382", sX, idS + 6, 1, r.s38, tX, connX);
         L(v61, v61, sc.Input[2].GetColor(), "0.618", sX, idS + 9, 1, r.s61, tX, connX);
 
@@ -277,16 +287,18 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
 
     if (IsVisible) {
         if (needsRedraw || TState == 2) {
-            for (int i = 0; i < 30; i++) { sc.Subgraph[i*2+1][pData->retracements[i].oldIdxF] = 0; sc.Subgraph[i*2+2][pData->retracements[i].oldIdxR] = 0; }
+            for (int i = 0; i < 20; i++) { sc.Subgraph[i*2+1][pData->retracements[i].oldIdxF] = 0; sc.Subgraph[i*2+2][pData->retracements[i].oldIdxR] = 0; }
             for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) { sc.Subgraph[59][k] = 0; sc.Subgraph[60][k] = 0; }
-            for (int i = 0; i < pData->numSaved; i++) DrawSet(pData->retracements[i], 20000+(i * 20), i);
+            for (int i = 0; i < pData->numSaved; i++) DrawSet(pData->retracements[i], RETR_BASE_ID + (i * SLOT_SIZE), i); 
             LastSize = sc.ArraySize; if (cacheMissing) LastSize = -1; 
         }
     } else {
         if (LastSize != -2) {
-            for(int id = 10000; id <= 10025; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
-            for(int i = 0; i < pData->numSaved; i++) {
-                for(int j = 0; j < 20; j++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, 20000 + (i * 20) + j);
+            for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
+            for(int i = 0; i < 20; i++) {
+                for(int j = 0; j < SLOT_SIZE; j++) {
+                    sc.DeleteACSChartDrawing(sc.ChartNumber, 0, RETR_BASE_ID + (i * SLOT_SIZE) + j);
+                }
                 sc.Subgraph[i*2+1][pData->retracements[i].oldIdxF] = 0; sc.Subgraph[i*2+2][pData->retracements[i].oldIdxR] = 0;
             }
             for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) { sc.Subgraph[59][k] = 0; sc.Subgraph[60][k] = 0; }
