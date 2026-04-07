@@ -22,7 +22,6 @@ struct SavedRetracement {
     char s38[32], s61[32], s100[32];
     int dw38, dw61, dw100;               
 
-    // --- ETAP 1-5: POLE WIDOCZNOŚCI ---
     bool isVisibleOnCurrentTF; 
 };
 
@@ -87,14 +86,81 @@ void RefreshRetracementStrings(SCStudyInterfaceRef sc, SavedRetracement& ret) {
     ret.dw61 = (t.GetLength() / 2) + 1;
 }
 
+// --- NATYWNE RENDEROWANIE GDI (CZARNA LINIA 1.000) ---
+void DrawReactionGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
+    DiNapoliData* pData = (DiNapoliData*)sc.GetPersistentPointer(500);
+    if (!pData) return;
+
+    bool syncEnabled = sc.Input[7].GetYesNo();
+    int masterHideBtn = sc.Input[8].GetInt();
+    int currentGlobalHide = sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT);
+    
+    // Inwersja predykcyjna dla GDI
+    bool IsVisible = (currentGlobalHide == 0);
+    if (syncEnabled && sc.MenuEventID == masterHideBtn) IsVisible = !IsVisible;
+
+    if (!IsVisible) return;
+
+    HPEN hPen = CreatePen(PS_SOLID, 2, sc.Input[3].GetColor()); 
+    HPEN hOldPen = (HPEN)SelectObject(hDC, hPen);
+
+    // Dynamiczne wyliczenie offsetu bazowego na podstawie wielkości pierścienia
+    int baseOffset = (sc.Subgraph[1].LineWidth / 2) + 2; 
+    int userCorrection = sc.Input[13].GetInt();
+    int finalOffset = baseOffset + userCorrection;
+
+    for (int i = 0; i < pData->numSaved; i++) {
+        SavedRetracement& r = pData->retracements[i];
+        if (r.pF <= 0 || !r.isVisibleOnCurrentTF) continue;
+
+        int xS = sc.BarIndexToXPixelCoordinate(r.idxR) + finalOffset; 
+        int connX = sc.ArraySize + (r.step * r.dw100) + r.dw100;
+        int xE = sc.BarIndexToXPixelCoordinate(connX);
+        int yP = sc.RegionValueToYPixelCoordinate(r.pR, sc.GraphRegion);
+
+        if (yP > 0) {
+            MoveToEx(hDC, xS, yP, NULL);
+            LineTo(hDC, xE, yP);
+        }
+    }
+
+    int TState = sc.GetPersistentInt(1);
+    if (TState == 2) {
+        float pF = sc.GetPersistentFloat(10);
+        int cIdx = sc.ActiveToolIndex;
+        float mY = (float)sc.ActiveToolYValue;
+        float pR = (mY < pF) ? sc.Low[cIdx] : sc.High[cIdx];
+        int SessionSteps = sc.GetPersistentInt(3);
+
+        SCString t = sc.FormatGraphValue(pR, sc.BaseGraphValueFormat);
+        int dw100 = (t.GetLength() / 2) + 1;
+
+        int xS = sc.BarIndexToXPixelCoordinate(cIdx) + finalOffset;
+        int connX = sc.ArraySize + (SessionSteps * dw100) + dw100;
+        int xE = sc.BarIndexToXPixelCoordinate(connX);
+        int yP = sc.RegionValueToYPixelCoordinate(pR, sc.GraphRegion);
+
+        if (yP > 0) {
+            MoveToEx(hDC, xS, yP, NULL);
+            LineTo(hDC, xE, yP);
+        }
+    }
+
+    SelectObject(hDC, hOldPen);
+    DeleteObject(hPen);
+}
+
 SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
 {
     if (sc.SetDefaults) {
-        sc.GraphName = "DiNapoli Retracement v_ULTRA_STABLE";
+        sc.GraphName = "DiNapoli Retracement v_ULTRA_STABLE_GDI";
         sc.GraphRegion = 0; sc.AutoLoop = 0; sc.UpdateAlways = 1; 
         sc.ReceivePointerEvents = ACS_RECEIVE_POINTER_EVENTS_WHEN_ACS_BUTTON_ENABLED;
         sc.ReceiveCharacterEvents = 1; 
 
+        sc.ScaleRangeType = SCALE_SAMEASREGION; 
+
+        sc.p_GDIFunction = DrawReactionGDI;
         sc.Subgraph[0].Name = "Heartbeat Sync"; sc.Subgraph[0].DrawStyle = DRAWSTYLE_HIDDEN;
 
         sc.Input[0].Name = "Numer Przycisku Retracement"; sc.Input[0].SetInt(1); 
@@ -104,12 +170,14 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         sc.Input[4].Name = "Kolor Pierscieni (Royal Blue)"; sc.Input[4].SetColor(RGB(65, 105, 225)); 
         sc.Input[5].Name = "Max Rysunkow"; sc.Input[5].SetInt(20); 
 
-        sc.Input[6].Name = "Unused (Reserved)"; sc.Input[6].SetInt(0); 
         sc.Input[7].Name = "Sync z Master HIDE (Button 20)"; sc.Input[7].SetYesNo(1);
         sc.Input[8].Name = "Master Hide Button ID"; sc.Input[8].SetInt(20);
         sc.Input[9].Name = "Przycisk RETR DEL"; sc.Input[9].SetInt(23); 
         sc.Input[11].Name = "Search Range Bars (TF Stability)"; sc.Input[11].SetInt(10);
         sc.Input[12].Name = "Min Bars Cluster Visibility"; sc.Input[12].SetInt(3);
+        
+        // NOWY INPUT: Korekta przesunięcia linii 1.000 (GDI)
+        sc.Input[13].Name = "Korekta przesunięcia GDI (piksele)"; sc.Input[13].SetInt(0);
 
         for (int i = 1; i <= 60; i++) {
             sc.Subgraph[i].Name.Format("Ring %d", i); sc.Subgraph[i].DrawStyle = DRAWSTYLE_CIRCLE_HOLLOW; 
@@ -142,20 +210,16 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
     int& LastSize = sc.GetPersistentInt(4); 
     int& SessionSteps = sc.GetPersistentInt(3); 
     int& LastSyncValue = sc.GetPersistentInt(15); 
+    int& LastLeftIdx = sc.GetPersistentInt(16);
 
     bool syncEnabled = sc.Input[7].GetYesNo();
     int masterHideBtn = sc.Input[8].GetInt();
-    bool IsVisible = true;
-    int currentGlobalHide = 0;
-
-    if (syncEnabled) {
-        currentGlobalHide = sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT);
-        if (sc.MenuEventID == masterHideBtn) {
-            if (currentGlobalHide == LastSyncValue) { IsVisible = (currentGlobalHide != 0); } 
-            else { IsVisible = (currentGlobalHide == 0); }
-            LastSize = -1; 
-        } else { IsVisible = (currentGlobalHide == 0); }
-        if (currentGlobalHide != LastSyncValue) { LastSyncValue = currentGlobalHide; LastSize = -1; }
+    int currentGlobalHide = sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT);
+    
+    // Inwersja predykcyjna (Zero-Lag)
+    bool IsVisible = (currentGlobalHide == 0);
+    if (syncEnabled && sc.MenuEventID == masterHideBtn) {
+        IsVisible = !IsVisible;
     }
 
     if (sc.MenuEventID == RetrDelBtn) {
@@ -187,13 +251,11 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         sc.CharacterEventCode = 0; 
     }
 
-    bool needsRedraw = (sc.ArraySize != LastSize || sc.IsFullRecalculation);
-
+    // HEAVY LOGIC (INDEXING/TF STABILITY)
     if (sc.IsFullRecalculation || LastSize == -1) {
         for (int i = 1; i <= 60; i++) for (int k = 0; k < sc.ArraySize; k++) sc.Subgraph[i][k] = 0;
         
         int searchRange = sc.Input[11].GetInt(); 
-        
         for (int i = 0; i < pData->numSaved; i++) {
             SavedRetracement& r = pData->retracements[i];
             if (r.pF > 0) {
@@ -204,7 +266,7 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
                 r.idxR = (foundR != -1) ? foundR : sc.GetNearestMatchForSCDateTime(sc.ChartNumber, r.tR);
 
                 r.lastCheckedIdx = sc.ArraySize - 1; 
-                RefreshRetracementStrings(sc, r); // ETAP 5: Odśwież bufory po Re-syncu
+                RefreshRetracementStrings(sc, r); 
             }
         }
 
@@ -249,7 +311,7 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
                 if (pData->retracements[j].tF == currentTF) pData->retracements[j].isVisibleOnCurrentTF = ((maxSpan + 1) >= threshold);
             }
 
-            SaveDiNapoliData(sc, pData); SessionSteps++; LastSize = -1; needsRedraw = true;
+            SaveDiNapoliData(sc, pData); SessionSteps++; LastSize = -1; 
         }
         sc.PointerEventType = 0;
     }
@@ -265,7 +327,6 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
                     r.tF = sc.BaseDateTimeIn[j]; 
                     r.idxF = j;
                     RefreshRetracementStrings(sc, r); 
-                    needsRedraw = true; 
                     trailingUpdated = true;
                 }
             }
@@ -274,12 +335,21 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
     }
     if (trailingUpdated) SaveDiNapoliData(sc, pData); 
 
+    // REDRAW GATE
+    bool needsRedraw = (sc.ArraySize != LastSize) 
+                    || (sc.IndexOfFirstVisibleBar != LastLeftIdx) 
+                    || (currentGlobalHide != LastSyncValue) 
+                    || (syncEnabled && sc.MenuEventID == masterHideBtn) 
+                    || sc.IsFullRecalculation 
+                    || (TState > 0) 
+                    || trailingUpdated;
+
     bool cacheMissing = false;
     auto GetYAdj = [&](float p, bool isHigh) -> float {
-        if (!isHigh || !IsVisible) return p; 
+        if (!IsVisible) return p; 
         int pY = sc.RegionValueToYPixelCoordinate(p, sc.GraphRegion);
         if (pY == 0) { cacheMissing = true; return p; } 
-        float yResult = (float)sc.YPixelCoordinateToGraphValue(pY + 1); // ETAP 5: Zachowanie offsetu +1px
+        float yResult = (float)sc.YPixelCoordinateToGraphValue(pY + 1); 
         if (yResult <= 1.0f || (p > 1.0f && fabsf(yResult - p) / p > 0.20f)) { 
             cacheMissing = true; return p; 
         }
@@ -300,32 +370,34 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         int sX = sc.ArraySize + (r.step * r.dw100);
         int connX = sX + r.dw100;
 
-        auto L = [&](float p, float v, COLORREF c, const char* n, int lineStartIdx, int id, int w, const char* label, int textIdx, int lineEndIdx) {
-            float yLive = GetYAdj(v, true); // MOst Pikselowy dla nazw poziomów
+        auto L = [&](float p, float v, COLORREF c, const char* n, int lineStartIdx, int id, int w, const char* label, int textIdx, int lineEndIdx, bool drawLine) {
+            float yLive = GetYAdj(v, true); 
 
-            p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; 
-            p_T->AddAsUserDrawnDrawing = 0; p_T->LineStyle = LINESTYLE_SOLID;
-            p_T->BeginIndex = lineStartIdx; p_T->EndIndex = lineEndIdx; p_T->BeginValue = p; p_T->EndValue = p; 
-            p_T->Color = c; p_T->LineWidth = w; p_T->LineNumber = id; sc.UseTool(*p_T);
+            if (drawLine) {
+                p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; 
+                p_T->AddAsUserDrawnDrawing = 0; p_T->LineStyle = LINESTYLE_SOLID;
+                p_T->BeginIndex = lineStartIdx; p_T->EndIndex = lineEndIdx; p_T->BeginValue = p; p_T->EndValue = p; 
+                p_T->Color = c; p_T->LineWidth = w; p_T->LineNumber = id; sc.UseTool(*p_T);
+            }
 
             p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_TEXT; 
-            p_T->AddAsUserDrawnDrawing = 0; p_T->BeginIndex = textIdx; p_T->BeginValue = p; // Cena na linii
+            p_T->AddAsUserDrawnDrawing = 0; p_T->BeginIndex = textIdx; p_T->BeginValue = p; 
             p_T->Color = c; p_T->FontFace = "Arial"; p_T->FontSize = 8; p_T->FontBold = 1; p_T->Text = label; 
             p_T->TextAlignment = DT_CENTER | DT_BOTTOM; p_T->LineNumber = id + 1; sc.UseTool(*p_T);
 
-            p_T->Text = n; p_T->BeginValue = yLive; // Nazwa poziomu pod linią (Most)
+            p_T->Text = n; p_T->BeginValue = yLive; 
             p_T->TextAlignment = DT_CENTER | DT_TOP; p_T->LineNumber = id + 2; sc.UseTool(*p_T);
         };
 
         int tX = (sX + connX) / 2;
-        L(r.pR, r.pR, sc.Input[3].GetColor(), "1.000", r.idxR, idS + 3, 2, r.s100, tX, connX);
+        L(r.pR, r.pR, sc.Input[3].GetColor(), "1.000", r.idxR, idS + 3, 2, r.s100, tX, connX, false);
         
         float rng = r.pF - r.pR; 
         float v38 = sc.RoundToTickSize(r.pF - rng * 0.382f); 
         float v61 = sc.RoundToTickSize(r.pF - rng * 0.618f); 
         
-        L(v38, v38, sc.Input[1].GetColor(), "0.382", sX, idS + 6, 1, r.s38, tX, connX);
-        L(v61, v61, sc.Input[2].GetColor(), "0.618", sX, idS + 9, 1, r.s61, tX, connX);
+        L(v38, v38, sc.Input[1].GetColor(), "0.382", sX, idS + 6, 1, r.s38, tX, connX, true);
+        L(v61, v61, sc.Input[2].GetColor(), "0.618", sX, idS + 9, 1, r.s61, tX, connX, true);
 
         p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; 
         p_T->AddAsUserDrawnDrawing = 0; p_T->LineStyle = LINESTYLE_DOT; 
@@ -333,17 +405,29 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         p_T->Color = RGB(160, 160, 160); p_T->LineNumber = idS + 12; sc.UseTool(*p_T);
     };
 
-    if (IsVisible) {
-        if (needsRedraw || TState == 2) {
-            for (int i = 1; i <= 60; i++) {
-                for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) {
-                    sc.Subgraph[i][k] = 0;
-                }
+    if (IsVisible && needsRedraw) {
+        // Atomic Wipe
+        for (int i = 1; i <= 60; i++) {
+            for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) {
+                sc.Subgraph[i][k] = 0;
             }
-            for (int i = 0; i < pData->numSaved; i++) DrawSet(pData->retracements[i], RETR_BASE_ID + (i * SLOT_SIZE), i, false); 
-            LastSize = sc.ArraySize; if (cacheMissing) LastSize = -1; 
         }
-    } else {
+        for (int i = 0; i < pData->numSaved; i++) DrawSet(pData->retracements[i], RETR_BASE_ID + (i * SLOT_SIZE), i, false); 
+        
+        if (TState == 2) {
+            SavedRetracement preview; memset(&preview, 0, sizeof(SavedRetracement));
+            preview.pF = sc.GetPersistentFloat(10); preview.idxF = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, sc.GetPersistentSCDateTime(10));
+            preview.pR = (mY < preview.pF) ? sc.Low[cIdx] : sc.High[cIdx]; preview.idxR = cIdx; 
+            preview.type = sc.GetPersistentInt(11); preview.step = SessionSteps; RefreshRetracementStrings(sc, preview); 
+            preview.isVisibleOnCurrentTF = true; 
+            DrawSet(preview, 10000, 29, true); 
+        }
+
+        LastSize = sc.ArraySize; 
+        LastLeftIdx = sc.IndexOfFirstVisibleBar;
+        LastSyncValue = currentGlobalHide;
+        if (cacheMissing) LastSize = -1; 
+    } else if (!IsVisible) {
         if (LastSize != -2) {
             for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
             for(int i = 0; i < 20; i++) {
@@ -355,14 +439,7 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
                 for (int k = 0; k < sc.ArraySize; k++) sc.Subgraph[i][k] = 0;
             }
             LastSize = -2; 
+            LastSyncValue = currentGlobalHide;
         }
-    }
-
-    if (TState == 2 && IsVisible) {
-        SavedRetracement preview; memset(&preview, 0, sizeof(SavedRetracement));
-        preview.pF = sc.GetPersistentFloat(10); preview.idxF = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, sc.GetPersistentSCDateTime(10));
-        preview.pR = (mY < preview.pF) ? sc.Low[cIdx] : sc.High[cIdx]; preview.idxR = cIdx; 
-        preview.type = sc.GetPersistentInt(11); preview.step = SessionSteps; RefreshRetracementStrings(sc, preview); 
-        DrawSet(preview, 10000, 29, true); 
     }
 }
