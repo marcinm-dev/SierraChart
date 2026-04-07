@@ -21,6 +21,9 @@ struct SavedRetracement {
     
     char s38[32], s61[32], s100[32];
     int dw38, dw61, dw100;               
+
+    // --- ETAP 1-5: POLE WIDOCZNOŚCI ---
+    bool isVisibleOnCurrentTF; 
 };
 
 struct DiNapoliData {
@@ -101,6 +104,9 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         sc.Input[8].Name = "Master Hide Button ID"; sc.Input[8].SetInt(20);
         sc.Input[9].Name = "Przycisk RETR DEL"; sc.Input[9].SetInt(23); 
 
+        sc.Input[11].Name = "Min Bars Cluster Visibility"; 
+        sc.Input[11].SetInt(3);
+
         for (int i = 1; i <= 60; i++) {
             sc.Subgraph[i].Name.Format("Ring %d", i); sc.Subgraph[i].DrawStyle = DRAWSTYLE_CIRCLE_HOLLOW; 
             sc.Subgraph[i].LineWidth = 5; sc.Subgraph[i].PrimaryColor = RGB(65, 105, 225); 
@@ -148,7 +154,6 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         if (currentGlobalHide != LastSyncValue) { LastSyncValue = currentGlobalHide; LastSize = -1; }
     }
 
-    // --- LOGIKA ATOMIC RESET (RETR DEL) [Etap 3] ---
     if (sc.MenuEventID == RetrDelBtn) {
         for (int i = 0; i < 20; i++) {
             for (int j = 0; j < SLOT_SIZE; j++) {
@@ -167,7 +172,6 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         sc.MenuEventID = 0; 
     }
 
-    // --- LOGIKA KLAWISZA SPACE (Anulowanie podglądu) [Etap 5 Audit] ---
     if (sc.CharacterEventCode == 32 && TState > 0) 
     {
         for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
@@ -180,7 +184,6 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
     }
 
     bool needsRedraw = (sc.ArraySize != LastSize || sc.IsFullRecalculation);
-    bool cacheMissing = false;
 
     if (sc.IsFullRecalculation || LastSize == -1) {
         for (int i = 1; i <= 60; i++) for (int k = 0; k < sc.ArraySize; k++) sc.Subgraph[i][k] = 0;
@@ -194,9 +197,22 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
                 RefreshRetracementStrings(sc, r);
             }
         }
-    }
 
-    // --- WYCIĘTO LEGACY KEYBOARD LOGIC (Etap 5) ---
+        // --- KOREKTA LOGIKI KLASTRA (Grid Span) ---
+        int threshold = sc.Input[11].GetInt();
+        for (int i = 0; i < pData->numSaved; i++) {
+            SCDateTime currentTF = pData->retracements[i].tF;
+            int maxSpan = 0;
+            for (int j = 0; j < pData->numSaved; j++) {
+                if (pData->retracements[j].tF == currentTF) {
+                    int dist = abs(pData->retracements[j].idxR - pData->retracements[j].idxF);
+                    if (dist > maxSpan) maxSpan = dist;
+                }
+            }
+            // Zastosowanie +1 aby 3 bary (dystans 2) były widoczne przy progu 3
+            pData->retracements[i].isVisibleOnCurrentTF = ((maxSpan + 1) >= threshold);
+        }
+    }
 
     if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == Btn) { TState = 1; SessionSteps = 0; }
     int cIdx = sc.ActiveToolIndex; float mY = (float)sc.ActiveToolYValue;
@@ -212,22 +228,42 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
             pData->retracements[s].oldIdxF = pData->retracements[s].idxF; pData->retracements[s].oldIdxR = pData->retracements[s].idxR;
             pData->retracements[s].lastCheckedIdx = sc.ArraySize - 1; RefreshRetracementStrings(sc, pData->retracements[s]);
             if (pData->numSaved < 20) pData->numSaved++; 
+
+            int threshold = sc.Input[11].GetInt();
+            SCDateTime currentTF = pData->retracements[s].tF;
+            int maxSpan = 0;
+            for (int j = 0; j < pData->numSaved; j++) {
+                if (pData->retracements[j].tF == currentTF) {
+                    int dist = abs(pData->retracements[j].idxR - pData->retracements[j].idxF);
+                    if (dist > maxSpan) maxSpan = dist;
+                }
+            }
+            for (int j = 0; j < pData->numSaved; j++) {
+                if (pData->retracements[j].tF == currentTF) pData->retracements[j].isVisibleOnCurrentTF = ((maxSpan + 1) >= threshold);
+            }
+
             SaveDiNapoliData(sc, pData); SessionSteps++; LastSize = -1; needsRedraw = true;
         }
         sc.PointerEventType = 0;
     }
 
+    bool trailingUpdated = false;
     for (int i = 0; i < pData->numSaved; i++) {
-        SavedRetracement& r = pData->retracements[i]; int startScan = max(r.idxF, r.lastCheckedIdx);
-        for (int j = startScan; j < sc.ArraySize; j++) {
-            if ((r.type == 1 && sc.High[j] > r.pF) || (r.type == 2 && sc.Low[j] < r.pF)) {
-                r.pF = (r.type == 1) ? sc.High[j] : sc.Low[j]; r.tF = sc.BaseDateTimeIn[j]; r.idxF = j;
-                RefreshRetracementStrings(sc, r); needsRedraw = true; 
+        SavedRetracement& r = pData->retracements[i]; 
+        if (r.isVisibleOnCurrentTF) {
+            int startScan = max(r.idxF, r.lastCheckedIdx);
+            for (int j = startScan; j < sc.ArraySize; j++) {
+                if ((r.type == 1 && sc.High[j] > r.pF) || (r.type == 2 && sc.Low[j] < r.pF)) {
+                    r.pF = (r.type == 1) ? sc.High[j] : sc.Low[j]; r.tF = sc.BaseDateTimeIn[j]; r.idxF = j;
+                    RefreshRetracementStrings(sc, r); needsRedraw = true; trailingUpdated = true;
+                }
             }
         }
         r.lastCheckedIdx = sc.ArraySize - 1;
     }
+    if (trailingUpdated) SaveDiNapoliData(sc, pData);
 
+    bool cacheMissing = false;
     auto GetYAdj = [&](float p, bool isHigh) -> float {
         if (!isHigh || !IsVisible) return p; 
         int pY = sc.RegionValueToYPixelCoordinate(p, sc.GraphRegion);
@@ -239,8 +275,10 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         return yResult;
     };
 
-    auto DrawSet = [&](const SavedRetracement& r, int idS, int drawingIdx) {
+    auto DrawSet = [&](const SavedRetracement& r, int idS, int drawingIdx, bool isPreview) {
         if (r.pF <= 0 || r.pR <= 0) return;
+        if (!isPreview && !r.isVisibleOnCurrentTF) return;
+
         float yFP = GetYAdj(r.pF, (r.type == 1)), yRP = GetYAdj(r.pR, (r.type == 2));
         int subF = drawingIdx * 2 + 1, subR = drawingIdx * 2 + 2;
         if (IsVisible && subR <= 60) {
@@ -289,7 +327,7 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         if (needsRedraw || TState == 2) {
             for (int i = 0; i < 20; i++) { sc.Subgraph[i*2+1][pData->retracements[i].oldIdxF] = 0; sc.Subgraph[i*2+2][pData->retracements[i].oldIdxR] = 0; }
             for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) { sc.Subgraph[59][k] = 0; sc.Subgraph[60][k] = 0; }
-            for (int i = 0; i < pData->numSaved; i++) DrawSet(pData->retracements[i], RETR_BASE_ID + (i * SLOT_SIZE), i); 
+            for (int i = 0; i < pData->numSaved; i++) DrawSet(pData->retracements[i], RETR_BASE_ID + (i * SLOT_SIZE), i, false); 
             LastSize = sc.ArraySize; if (cacheMissing) LastSize = -1; 
         }
     } else {
@@ -310,6 +348,7 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         SavedRetracement preview; memset(&preview, 0, sizeof(SavedRetracement));
         preview.pF = sc.GetPersistentFloat(10); preview.idxF = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, sc.GetPersistentSCDateTime(10));
         preview.pR = (mY < preview.pF) ? sc.Low[cIdx] : sc.High[cIdx]; preview.idxR = cIdx; 
-        preview.type = sc.GetPersistentInt(11); preview.step = SessionSteps; RefreshRetracementStrings(sc, preview); DrawSet(preview, 10000, 29); 
+        preview.type = sc.GetPersistentInt(11); preview.step = SessionSteps; RefreshRetracementStrings(sc, preview); 
+        DrawSet(preview, 10000, 29, true); 
     }
 }
