@@ -4,7 +4,7 @@ A Sierra Chart ACSIL study that recreates the DiNapoli retracement tool from Tra
 
 ## Versions
 
-Versions are git tags: `dinapoliretracement-v3`, `dinapoliretracement-v5`, `dinapoliretracement-v6`, `dinapoliretracement-v7`, `dinapoliretracement-v8`, `dinapoliretracement-v9`, `dinapoliretracement-v10`, `dinapoliretracement-v11`, `dinapoliretracement-v13`.
+Versions are git tags: `dinapoliretracement-v3`, `dinapoliretracement-v5`, `dinapoliretracement-v6`, `dinapoliretracement-v7`, `dinapoliretracement-v8`, `dinapoliretracement-v9`, `dinapoliretracement-v10`, `dinapoliretracement-v11`, `dinapoliretracement-v13`, `dinapoliretracement-v16`.
 
 - **V3**: First saved version: two-click Focus and Reaction tool with 0.382, 0.618 and 1.000 levels and incremental trailing focus.
 - **V5**: Rings drawn as native subgraphs, GPU price-scale guard and full subgraph wipe on recalculation.
@@ -15,3 +15,4 @@ Versions are git tags: `dinapoliretracement-v3`, `dinapoliretracement-v5`, `dina
 - **V10**: Hide the retracements of small swings on higher timeframes (cluster visibility threshold).
 - **V11**: Time-price alignment falls back to the nearest bar and the trailing focus updates its time, for lower timeframes.
 - **V13**: Black 1.000 line drawn with native GDI starting 4 px from the ring, redraw gate and a pixel correction input.
+- **V16**: Bar containment lookup after an interval change, session bypass with a float tolerance and a live preview.
