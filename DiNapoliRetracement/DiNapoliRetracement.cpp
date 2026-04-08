@@ -118,10 +118,11 @@ void DrawReactionGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
     DiNapoliData* pData = (DiNapoliData*)sc.GetPersistentPointer(500);
     if (!pData) return;
     
-    int syncBtn = sc.Input[8].GetInt();
-    bool IsVisible = (sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT) == 0);
-    if (sc.Input[7].GetYesNo() && sc.MenuEventID == syncBtn) IsVisible = !IsVisible;
-    if (!IsVisible) return;
+   // --- ETAP 3: GDI SLAVE MODE (DECISION BRIDGE) ---
+    // GDI ufa wyłącznie decyzji podjętej w głównej pętli (Slot 5)
+  bool effectiveIsVisible = (sc.GetPersistentInt(5) == 1);
+    if (!effectiveIsVisible) return;
+
 
     HPEN* phPen = (HPEN*)sc.GetPersistentPointer(502);
     HPEN hOldPen = (phPen && *phPen) ? (HPEN)SelectObject(hDC, *phPen) : NULL;
@@ -248,9 +249,25 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
     sc.SetCustomStudyControlBarButtonText(Btn, "DiNapoli"); sc.SetCustomStudyControlBarButtonText(RetrDelBtn, "RETR DEL"); 
     int& TState = sc.GetPersistentInt(1), &LastSize = sc.GetPersistentInt(4), &SessionSteps = sc.GetPersistentInt(3); 
     int& LastSyncValue = sc.GetPersistentInt(15), &LastLeftIdx = sc.GetPersistentInt(16);
+    
+   
+// --- ETAP 3: CONDITIONAL SYNC & SOFT REDRAW ---
+    int syncBtn = sc.Input[8].GetInt();
     int currentGlobalHide = sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT);
-    bool IsVisible = (currentGlobalHide == 0);
-    if (sc.Input[7].GetYesNo() && sc.MenuEventID == sc.Input[8].GetInt()) IsVisible = !IsVisible;
+    bool isSyncImpulse = (sc.Input[7].GetYesNo() && sc.MenuEventID == syncBtn);
+    
+    bool effectiveIsVisible = (currentGlobalHide == 0);
+    if (isSyncImpulse) {
+        LastSize = -1; // Soft Redraw Signal - wymusza otwarcie bramki
+        if (currentGlobalHide == LastSyncValue) {
+            effectiveIsVisible = !effectiveIsVisible;
+            LastSyncValue = effectiveIsVisible ? 0 : 1; // Wyrównanie predykcyjne
+        }
+    }
+    // Most decyzyjny (Single Source of Truth) dla silnika GDI
+    sc.SetPersistentInt(5, effectiveIsVisible ? 1 : 0);
+
+
 
     if (sc.MenuEventID == RetrDelBtn) {
         for (int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
@@ -358,15 +375,14 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
     // DO NOT MODIFY - PROTECTS LABEL HIT TOLERANCE AND ASYMMETRIC NUDGE
     // =========================================================================
 
-// Bramka Redraw z synchronizacją HIDE
-    
-bool needsRedraw = (sc.ArraySize != LastSize) 
-                    || (sc.IndexOfFirstVisibleBar != LastLeftIdx) 
-                    || (currentGlobalHide != LastSyncValue) 
-                    || (sc.Input[7].GetYesNo() && sc.MenuEventID == sc.Input[8].GetInt())
-                    || sc.IsFullRecalculation 
-                    || trailingUpdated 
-                    || (TState > 0 && sc.PointerEventType == SC_POINTER_MOVE);
+// --- ETAP 3: CLEAN EVENT-DRIVEN REDRAW GATE ---
+    bool needsRedraw = (sc.ArraySize != LastSize) 
+                        || (sc.IndexOfFirstVisibleBar != LastLeftIdx) 
+                        || (currentGlobalHide != LastSyncValue) 
+                        || isSyncImpulse 
+                        || sc.IsFullRecalculation 
+                        || trailingUpdated 
+                        || (TState > 0 && sc.PointerEventType == SC_POINTER_MOVE);
 
     bool cacheMissing = false;
     auto GetYAdjPr = [&](float p, bool isHigh) -> float {
@@ -381,7 +397,7 @@ bool needsRedraw = (sc.ArraySize != LastSize)
     // 🛑 [FROZEN BLOCK END]
     // =========================================================================
 
-    if (IsVisible && (needsRedraw || TState > 0)) {
+    if (effectiveIsVisible && (needsRedraw || TState > 0)) {
         for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) { sc.Subgraph[59][k] = 0; sc.Subgraph[60][k] = 0; }
         SCDateTime sessionTime = sc.GetPersistentSCDateTime(10);
         for (int i = 0; i < pData->numSaved; i++) {
@@ -451,7 +467,7 @@ auto L = [&](float p, float v, COLORREF c, const char* n, int id, const char* la
         } else {
             LastSize = -1; 
         }
-    } else if (!IsVisible && LastSize != -2) {
+   } else if (!effectiveIsVisible && LastSize != -2) {
         for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
         for(int i = 0; i < 20; i++) for(int j = 0; j < SLOT_SIZE; j++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, RETR_BASE_ID + (i * SLOT_SIZE) + j);
         for (int i = 1; i <= 60; i++) for (int k = 0; k < sc.ArraySize; k++) sc.Subgraph[i][k] = 0;
