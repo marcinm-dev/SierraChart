@@ -7,7 +7,7 @@ SCDLLName("DiNapoliExpansion")
 // --- STAŁE ARCHITEKTONICZNE ---
 const int GLOBAL_SYNC_SLOT = 9999;           
 
-// 1. BEZPIECZEŃSTWO BINARNE: Wymuszenie braku paddingu w strukturach
+// 1. BEZPIECZEŃSTWO BINARNE: Upakowanie struktur (Etap 1 GDI)
 #pragma pack(push, 1)
 struct SavedExpansion {
     float pA, pB, pC;
@@ -23,6 +23,7 @@ struct SavedExpansion {
     bool isVisibleOnCurrentTF;
     int dwA, dwB, dwC;
     int dwCOP, dwOP, dwXOP;
+    int reserved; // Rezerwowe miejsce pod przyszłe parametry
 };
 
 struct DiNapoliData {
@@ -30,6 +31,7 @@ struct DiNapoliData {
     int numSaved;
 };
 #pragma pack(pop)
+
 
 // --- FUNKCJA ODŚWIEŻAJĄCA TEKSTY I GEOMETRIĘ (HOISTED) ---
 void RefreshExpansionStrings(SCStudyInterfaceRef sc, SavedExpansion& exp) {
@@ -40,21 +42,21 @@ void RefreshExpansionStrings(SCStudyInterfaceRef sc, SavedExpansion& exp) {
     exp.vOP  = sc.RoundToTickSize(exp.pC + (wave * 1.000f));
     exp.vXOP = sc.RoundToTickSize(exp.pC + (wave * 1.618f));
 
-    SCString t;
-    t.Format("A %s", sc.FormatGraphValue(exp.pA, sc.BaseGraphValueFormat).GetChars());
-    strncpy(exp.sA, t.GetChars(), 31);
-    exp.sA[31] = '\0'; // 2. ŻELAZNA TERMINACJA
-    exp.dwA = (t.GetLength() / 2) + 2; 
+    SCString t, tPrice;
+    tPrice = sc.FormatGraphValue(exp.pA, sc.BaseGraphValueFormat);
+    t.Format("A %s", tPrice.GetChars());
+    strncpy(exp.sA, t.GetChars(), 31); exp.sA[31] = '\0';
+    exp.dwA = (tPrice.GetLength() / 2) + 2; // Przywrócono Standard + 2
 
-    t.Format("B %s", sc.FormatGraphValue(exp.pB, sc.BaseGraphValueFormat).GetChars());
-    strncpy(exp.sB, t.GetChars(), 31);
-    exp.sB[31] = '\0'; 
-    exp.dwB = (t.GetLength() / 2) + 2;
+    tPrice = sc.FormatGraphValue(exp.pB, sc.BaseGraphValueFormat);
+    t.Format("B %s", tPrice.GetChars());
+    strncpy(exp.sB, t.GetChars(), 31); exp.sB[31] = '\0'; 
+    exp.dwB = (tPrice.GetLength() / 2) + 2; 
 
-    t.Format("C %s", sc.FormatGraphValue(exp.pC, sc.BaseGraphValueFormat).GetChars());
-    strncpy(exp.sC, t.GetChars(), 31);
-    exp.sC[31] = '\0';
-    exp.dwC = (t.GetLength() / 2) + 2;
+    tPrice = sc.FormatGraphValue(exp.pC, sc.BaseGraphValueFormat);
+    t.Format("C %s", tPrice.GetChars());
+    strncpy(exp.sC, t.GetChars(), 31); exp.sC[31] = '\0';
+    exp.dwC = (tPrice.GetLength() / 2) + 2;
 
     SCString sTemp;
     sTemp = sc.FormatGraphValue(exp.vCOP, sc.BaseGraphValueFormat);
@@ -145,6 +147,100 @@ void LoadDiNapoliData(SCStudyInterfaceRef sc, DiNapoliData* pData) {
     if (inFile.is_open()) { inFile.read((char*)pData, sizeof(DiNapoliData)); inFile.close(); }
 }
 
+
+// --- SILNIK RENDERUJĄCY GDI (Etap 2) ---
+void DrawReactionGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
+    DiNapoliData* pData = (DiNapoliData*)sc.GetPersistentPointer(500);
+    if (!pData) return;
+
+    // 1. SYNCHRONIZACJA WIDOCZNOŚCI (Slot 9999)
+    bool IsVisible = (sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT) == 0);
+    if (!IsVisible) return;
+
+    HPEN* phPen = (HPEN*)sc.GetPersistentPointer(502);
+    HPEN hOldPen = (phPen && *phPen) ? (HPEN)SelectObject(hDC, *phPen) : NULL;
+
+    int finalOffset = 5 + sc.Input[13].GetInt(); // Oddech od pierścienia
+
+    // Lambda rysująca pojedynczą linię (Single Line)
+    auto DrawSingleLine = [&](int idx, float price, int dw, bool isHigh) {
+        if (idx < sc.IndexOfFirstVisibleBar - 50 || idx > sc.IndexOfLastVisibleBar + 50) return;
+
+        int xS = sc.BarIndexToXPixelCoordinate(idx) + finalOffset; 
+        // Finalny Sweet Spot: Odstęp (idx + 1) + Szerokość (dw).
+        // To połączenie ze standardem "+ 2" gwarantuje docięcie do ostatniej cyfry ceny.
+        int xE = sc.BarIndexToXPixelCoordinate(idx + 1 + dw); 
+        int yBase = sc.RegionValueToYPixelCoordinate(price, sc.GraphRegion);
+        
+        if (yBase > 0) { 
+            int yAdjusted = yBase + (isHigh ? 1 : 0);
+            MoveToEx(hDC, xS, yAdjusted, NULL); 
+            LineTo(hDC, xE, yAdjusted); 
+        }
+    };
+
+    for (int i = 0; i < pData->numSaved; i++) {
+        SavedExpansion& exp = pData->expansions[i];
+        if (exp.pA <= 0 || !exp.isVisibleOnCurrentTF || exp.idxA < 0) continue;
+        DrawSingleLine(exp.idxA, exp.pA, exp.dwA, (exp.aType == 1)); 
+        DrawSingleLine(exp.idxB, exp.pB, exp.dwB, (exp.aType != 1)); 
+        DrawSingleLine(exp.idxC, exp.pC, exp.dwC, (exp.aType == 1)); 
+    }
+
+   
+
+// Obsługa podglądu (Preview) - Zunifikowana z RefreshExpansionStrings (Etap 3)
+    int TState = sc.GetPersistentInt(1);
+    if (TState >= 1) {
+        int snapRange = sc.Input[6].GetInt();
+        int AType = sc.GetPersistentInt(12);
+        SavedExpansion tempExp; 
+        memset(&tempExp, 0, sizeof(SavedExpansion));
+
+        if (TState == 1) {
+            float mY = (float)sc.ActiveToolYValue;
+            bool isH = (fabs(mY - sc.High[sc.ActiveToolIndex]) < fabs(mY - sc.Low[sc.ActiveToolIndex]));
+            tempExp.pA = isH ? (float)sc.High[sc.ActiveToolIndex] : (float)sc.Low[sc.ActiveToolIndex];
+            tempExp.idxA = sc.ActiveToolIndex; 
+            tempExp.idxC = tempExp.idxA; // Bumper dla widoczności
+            RefreshExpansionStrings(sc, tempExp);
+            DrawSingleLine(tempExp.idxA, tempExp.pA, tempExp.dwA, isH);
+        }
+        else if (TState == 2) {
+            tempExp.pA = sc.GetPersistentFloat(10); 
+            tempExp.idxA = sc.GetPersistentInt(20);
+            int sB = GetSnappedIndex(sc, sc.ActiveToolIndex, snapRange, (AType == 2));
+            tempExp.pB = (AType == 2) ? (float)sc.High[sB] : (float)sc.Low[sB];
+            tempExp.idxB = sB; 
+            tempExp.idxC = sB;
+            RefreshExpansionStrings(sc, tempExp);
+            DrawSingleLine(tempExp.idxA, tempExp.pA, tempExp.dwA, (AType == 1));
+            DrawSingleLine(tempExp.idxB, tempExp.pB, tempExp.dwB, (AType == 2));
+        }
+        else if (TState == 3) {
+            tempExp.pA = sc.GetPersistentFloat(10); 
+            tempExp.idxA = sc.GetPersistentInt(20);
+            tempExp.pB = sc.GetPersistentFloat(11); 
+            tempExp.idxB = sc.GetPersistentInt(21);
+            int sC = GetSnappedIndex(sc, sc.ActiveToolIndex, snapRange, (AType == 1));
+            tempExp.pC = (AType == 1) ? (float)sc.High[sC] : (float)sc.Low[sC];
+            tempExp.idxC = sC;
+            RefreshExpansionStrings(sc, tempExp);
+            DrawSingleLine(tempExp.idxA, tempExp.pA, tempExp.dwA, (AType == 1));
+            DrawSingleLine(tempExp.idxB, tempExp.pB, tempExp.dwB, (AType != 1));
+            DrawSingleLine(tempExp.idxC, tempExp.pC, tempExp.dwC, (AType == 1));
+        }
+    }
+
+
+
+    if (hOldPen) SelectObject(hDC, hOldPen);
+}
+
+
+
+
+
 SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
 {
     // --- 1. KONFIGURACJA (ZAMROŻONA) ---
@@ -177,13 +273,17 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         sc.Input[8].Name = "Przycisk HIDE"; sc.Input[8].SetInt(20);
         sc.Input[9].Name = "Przycisk LAST DEL"; sc.Input[9].SetInt(21);
         sc.Input[10].Name = "Przycisk ALL DEL"; sc.Input[10].SetInt(22);
-        sc.Input[11].Name = "Search Range Bars"; sc.Input[11].SetInt(10);
+       sc.Input[11].Name = "Search Range Bars"; sc.Input[11].SetInt(10);
         sc.Input[12].Name = "Min Bars Visibility Threshold"; sc.Input[12].SetInt(3);
+        sc.Input[13].Name = "Korekta przesunięcia GDI (piksele)"; sc.Input[13].SetInt(0);
+
+        sc.p_GDIFunction = DrawReactionGDI; // Rejestracja silnika GDI (Etap 1)
+        sc.ScaleRangeType = SCALE_SAMEASREGION; // Zapobiega drganiom linii
 
         return;
     }
 
-    // --- 2. PAMIĘĆ ---
+    // --- 2. PAMIĘĆ I ZASOBY GDI (Etap 1) ---
     DiNapoliData* pData = (DiNapoliData*)sc.GetPersistentPointer(500); 
     if (pData == NULL) {
         pData = (DiNapoliData*)sc.AllocateMemory(sizeof(DiNapoliData));
@@ -196,6 +296,25 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         pTool = (s_UseTool*)sc.AllocateMemory(sizeof(s_UseTool));
         memset(pTool, 0, sizeof(s_UseTool)); sc.SetPersistentPointer(501, pTool);
     }
+
+    HPEN* phPen = (HPEN*)sc.GetPersistentPointer(502);
+    if (!phPen) {
+        phPen = (HPEN*)sc.AllocateMemory(sizeof(HPEN));
+        *phPen = NULL; sc.SetPersistentPointer(502, phPen);
+    }
+
+    // Bezpieczne usuwanie pióra GDI przy zamykaniu wskaźnika
+    if (sc.LastCallToFunction) {
+        if (phPen && *phPen) { DeleteObject(*phPen); *phPen = NULL; }
+        return;
+    }
+
+    // Inicjalizacja czarnego pióra 1-pikselowego
+    if (sc.IsFullRecalculation || *phPen == NULL) {
+        if (*phPen) DeleteObject(*phPen);
+        *phPen = CreatePen(PS_SOLID, 1, RGB(0, 0, 0));
+    }
+
 
     int DrawBtn = sc.Input[0].GetInt();
     int HideBtn = sc.Input[8].GetInt();
@@ -356,9 +475,8 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
             if (IsVisible && idx >= 0 && idx < sc.ArraySize) {
                 sc.Subgraph[subIdx].PrimaryColor = sc.Input[4].GetColor(); sc.Subgraph[subIdx][idx] = yLive; 
             }
-            pTool->Clear(); pTool->AddMethod = UTAM_ADD_OR_ADJUST; pTool->DrawingType = DRAWING_LINE;
-            pTool->AddAsUserDrawnDrawing = 0; pTool->BeginIndex = idx; pTool->EndIndex = idx + dw; pTool->BeginValue = p; pTool->EndValue = p;
-            pTool->Color = RGB(0, 0, 0); pTool->LineWidth = 1; pTool->LineNumber = id + 1; sc.UseTool(*pTool);
+            // Etap 3: Linia systemowa usunięta. Teraz rysuje ją silnik GDI z precyzyjnym offsetem 5px.
+            // Pozostawiamy tylko etykietę tekstową (Cena + Nazwa).
             pTool->Clear(); pTool->AddMethod = UTAM_ADD_OR_ADJUST; pTool->DrawingType = DRAWING_TEXT;
             pTool->AddAsUserDrawnDrawing = 0; pTool->BeginIndex = idx + 1; pTool->BeginValue = p; pTool->Color = RGB(0, 0, 0);
             pTool->FontFace = "Arial"; pTool->FontSize = 8; pTool->FontBold = 1; pTool->Text = label;
@@ -394,20 +512,35 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
             LastSize = sc.ArraySize; LastLeftIdx = sc.IndexOfFirstVisibleBar;
             if (cacheMissing) LastSize = -1; 
         }
-        if (TState >= 2) {
+     if (TState >= 1) {
             SavedExpansion preview; memset(&preview, 0, sizeof(SavedExpansion));
-            preview.pA = sc.GetPersistentFloat(10); preview.idxA = sc.GetPersistentInt(20); preview.aType = AType;
-            if (TState == 2) {
+            
+            // Logika Ducha Punktu A (TState 1)
+            if (TState == 1) {
+                float mY = (float)sc.ActiveToolYValue;
+                bool isH = (fabs(mY - sc.High[sc.ActiveToolIndex]) < fabs(mY - sc.Low[sc.ActiveToolIndex]));
+                preview.pA = isH ? (float)sc.High[sc.ActiveToolIndex] : (float)sc.Low[sc.ActiveToolIndex];
+                preview.idxA = sc.ActiveToolIndex;
+                preview.idxC = preview.idxA; // Bumper dla Clippingu renderera
+                preview.aType = isH ? 1 : 2;
+                RefreshExpansionStrings(sc, preview); 
+                DrawExpansionPreformatted(preview, 10000, 58, false, true);
+            }
+            else if (TState == 2) {
+                preview.pA = sc.GetPersistentFloat(10); preview.idxA = sc.GetPersistentInt(20); preview.aType = AType;
                 int sB = GetSnappedIndex(sc, sc.ActiveToolIndex, snapRange, (AType == 2));
                 preview.pB = (AType == 2) ? sc.High[sB] : sc.Low[sB]; preview.idxB = sB; preview.pC = preview.pB; preview.idxC = sB;
                 RefreshExpansionStrings(sc, preview); DrawExpansionPreformatted(preview, 10000, 58, false, true); 
-            } else if (TState == 3) {
+            } 
+            else if (TState == 3) {
+                preview.pA = sc.GetPersistentFloat(10); preview.idxA = sc.GetPersistentInt(20); preview.aType = AType;
                 preview.pB = sc.GetPersistentFloat(11); preview.idxB = sc.GetPersistentInt(21);
                 int sC = GetSnappedIndex(sc, sc.ActiveToolIndex, snapRange, (AType == 1));
                 preview.pC = (AType == 1) ? sc.High[sC] : sc.Low[sC]; preview.idxC = sC;
                 RefreshExpansionStrings(sc, preview); DrawExpansionPreformatted(preview, 10000, 58, true, true);
             }
         }
+
     } else {
         if (LastSize != -2) {
             for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
