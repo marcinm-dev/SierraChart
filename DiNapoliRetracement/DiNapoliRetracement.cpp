@@ -4,7 +4,10 @@
 
 SCDLLName("DiNapoliRetracement")
 
-// --- STAŁE ARCHITEKTONICZNE (ZAMROŻONE) ---
+// =========================================================================
+// 🛑 [FROZEN BLOCK START]: BINARY ARCHITECTURE & PERSISTENCE
+// DO NOT MODIFY, DO NOT SIMPLIFY, DO NOT REFACTOR THIS BLOCK
+// =========================================================================
 const int GLOBAL_SYNC_SLOT = 9999;
 #define RETR_BASE_ID 40000
 #define SLOT_SIZE 40
@@ -15,9 +18,10 @@ struct SavedRetracement {
     SCDateTime tF, tR;       
     int type;                
     int step;                
-    int idxF, idxR;          
+    int idxF, idxR;
     int lastCheckedIdx;      
-    int reserved[2];    
+    float lastP;             // ETAP 2: Bufor ceny do String Cachingu
+    int reserved_unused;     // Pozostałe wolne miejsce
     char s38[32], s61[32], s100[32];
     int dw38, dw61, dw100;               
     bool isVisibleOnCurrentTF; 
@@ -28,8 +32,14 @@ struct DiNapoliData {
     int numSaved;
 };
 #pragma pack(pop)
+// =========================================================================
+// 🛑 [FROZEN BLOCK END]
+// =========================================================================
 
-// --- SILNIK DOPASOWANIA (TIME-PRICE ALIGNMENT) ---
+// =========================================================================
+// 🛑 [FROZEN BLOCK START]: STABILITY ENGINE (TIME-PRICE ALIGNMENT)
+// DO NOT MODIFY - PROTECTS TF STABILITY (Daily/H4/M5)
+// =========================================================================
 int FindBestMatchIndex(SCStudyInterfaceRef sc, float targetPrice, SCDateTime targetTime, bool isHigh, int searchRangeBars) {
     int baseIdx = sc.GetContainingIndexForSCDateTime(sc.ChartNumber, targetTime);
     if (baseIdx < 0) return -1;
@@ -57,6 +67,9 @@ int GetSnappedIndex(SCStudyInterfaceRef sc, int mouseIdx, int range, bool findHi
     }
     return bestIdx;
 }
+// =========================================================================
+// 🛑 [FROZEN BLOCK END]
+// =========================================================================
 
 void SaveDiNapoliData(SCStudyInterfaceRef sc, DiNapoliData* pData) {
     SCString filePath;
@@ -73,55 +86,96 @@ void LoadDiNapoliData(SCStudyInterfaceRef sc, DiNapoliData* pData) {
 }
 
 void RefreshRetracementStrings(SCStudyInterfaceRef sc, SavedRetracement& ret) {
+    // --- ETAP 2: STRING CACHING GATE ---
+    // Jeśli cena nie zmieniła się i mamy już dane w buforze - wyjdź
+    if (fabs(ret.pR - ret.lastP) < 0.0000001f && ret.dw100 > 0) return;
+
     SCString t = sc.FormatGraphValue(ret.pR, sc.BaseGraphValueFormat);
     strncpy(ret.s100, t.GetChars(), 31); ret.s100[31] = '\0'; 
     ret.dw100 = (t.GetLength() / 2) + 1; 
-    float rng = ret.pF - ret.pR, v38 = sc.RoundToTickSize(ret.pF - rng * 0.382f), v61 = sc.RoundToTickSize(ret.pF - rng * 0.618f);
-    t = sc.FormatGraphValue(v38, sc.BaseGraphValueFormat); strncpy(ret.s38, t.GetChars(), 31); ret.s38[31] = '\0'; ret.dw38 = (t.GetLength() / 2) + 1;
-    t = sc.FormatGraphValue(v61, sc.BaseGraphValueFormat); strncpy(ret.s61, t.GetChars(), 31); ret.s61[31] = '\0'; ret.dw61 = (t.GetLength() / 2) + 1;
+
+    float rng = ret.pF - ret.pR;
+    float v38 = sc.RoundToTickSize(ret.pF - rng * 0.382f);
+    float v61 = sc.RoundToTickSize(ret.pF - rng * 0.618f);
+
+    t = sc.FormatGraphValue(v38, sc.BaseGraphValueFormat); 
+    strncpy(ret.s38, t.GetChars(), 31); ret.s38[31] = '\0'; 
+    ret.dw38 = (t.GetLength() / 2) + 1;
+
+    t = sc.FormatGraphValue(v61, sc.BaseGraphValueFormat); 
+    strncpy(ret.s61, t.GetChars(), 31); ret.s61[31] = '\0'; 
+    ret.dw61 = (t.GetLength() / 2) + 1;
+
+    ret.lastP = ret.pR; // Aktualizacja cache
 }
 
-// --- GDI RENDERER ---
+// =========================================================================
+// 🛑 [FROZEN BLOCK START]: GDI GPU GUARD & REDRAW GATE
+// DO NOT MODIFY - PROTECTS AGAINST COLD START (pY == 0) AND JITTER
+// =========================================================================
+
 void DrawReactionGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
     DiNapoliData* pData = (DiNapoliData*)sc.GetPersistentPointer(500);
     if (!pData) return;
+    
     int syncBtn = sc.Input[8].GetInt();
     bool IsVisible = (sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT) == 0);
     if (sc.Input[7].GetYesNo() && sc.MenuEventID == syncBtn) IsVisible = !IsVisible;
     if (!IsVisible) return;
 
-    HPEN hPen = CreatePen(PS_SOLID, 2, sc.Input[3].GetColor()); 
-    HPEN hOldPen = (HPEN)SelectObject(hDC, hPen);
-    int finalOffset = (sc.Subgraph[1].LineWidth / 2) + 2 + sc.Input[13].GetInt();
+    HPEN* phPen = (HPEN*)sc.GetPersistentPointer(502);
+    HPEN hOldPen = (phPen && *phPen) ? (HPEN)SelectObject(hDC, *phPen) : NULL;
+    
+    int finalOffset = 5 + sc.Input[13].GetInt();
     int TState = sc.GetPersistentInt(1);
     SCDateTime sessionTime = sc.GetPersistentSCDateTime(10);
+
+    // Wspólna funkcja rysująca (Jedna Lambda) eliminująca "split"
+    auto DrawSolidLine = [&](int idxR, float price, int type, int step, int dw) {
+        int xS = sc.BarIndexToXPixelCoordinate(idxR) + finalOffset; 
+        int xE = sc.BarIndexToXPixelCoordinate(sc.ArraySize + (step * dw) + dw);
+        int yBase = sc.RegionValueToYPixelCoordinate(price, sc.GraphRegion);
+        
+        if (yBase > 0) { 
+            // Ujednolicony Nudge: +1px dla High (type 2), 0px dla Low (type 1)
+            int yAdjusted = yBase + (type == 2 ? 1 : 0);
+            
+            // Rysujemy dwa rzędy 1-pikselowe, co daje idealne 2 piksele grubości
+            for (int h = 0; h < 2; h++) {
+                MoveToEx(hDC, xS, yAdjusted - h, NULL); 
+                LineTo(hDC, xE, yAdjusted - h); 
+            }
+        }
+    };
 
     for (int i = 0; i < pData->numSaved; i++) {
         SavedRetracement& r = pData->retracements[i];
         bool isCurrentSession = (TState > 0 && fabs(r.tF.GetAsDouble() - sessionTime.GetAsDouble()) < 0.0000001);
         if (r.pF <= 0 || (!r.isVisibleOnCurrentTF && !isCurrentSession) || r.idxR < 0) continue;
-        int xS = sc.BarIndexToXPixelCoordinate(r.idxR) + finalOffset; 
-        int xE = sc.BarIndexToXPixelCoordinate(sc.ArraySize + (r.step * r.dw100) + r.dw100);
-        int yP = sc.RegionValueToYPixelCoordinate(r.pR, sc.GraphRegion);
-        if (yP > 0) { MoveToEx(hDC, xS, yP, NULL); LineTo(hDC, xE, yP); }
+
+        // --- OPTYMALIZACJA: GDI VISIBILITY CULLING ---
+        // Pomiń rysowanie, jeśli punkt startowy linii jest poza prawą krawędzią widocznego zakresu
+        if (r.idxR > sc.IndexOfLastVisibleBar) continue;
+
+        DrawSolidLine(r.idxR, r.pR, r.type, r.step, r.dw100);
     }
 
     if (TState == 2) {
-        float pR = sc.GetPersistentFloat(12);
-        int sR = sc.GetPersistentInt(13);
-        int dw100 = (sc.FormatGraphValue(pR, sc.BaseGraphValueFormat).GetLength() / 2) + 1;
-        int xS = sc.BarIndexToXPixelCoordinate(sR) + finalOffset;
-        int xE = sc.BarIndexToXPixelCoordinate(sc.ArraySize + (sc.GetPersistentInt(3) * dw100) + dw100);
-        int yP = sc.RegionValueToYPixelCoordinate(pR, sc.GraphRegion);
-        if (yP > 0) { MoveToEx(hDC, xS, yP, NULL); LineTo(hDC, xE, yP); }
+        DrawSolidLine(sc.GetPersistentInt(13), sc.GetPersistentFloat(12), sc.GetPersistentInt(11), sc.GetPersistentInt(3), sc.GetPersistentInt(14));
     }
-    SelectObject(hDC, hOldPen); DeleteObject(hPen);
+    if (hOldPen) SelectObject(hDC, hOldPen);
 }
+
+
+
+// =========================================================================
+// 🛑 [FROZEN BLOCK END]
+// =========================================================================
 
 SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
 {
     if (sc.SetDefaults) {
-        sc.GraphName = "DiNapoli Retracement v_ULTRA_STABLE_GDI";
+        sc.GraphName = "DiNapoli Retracement";
         sc.GraphRegion = 0; sc.AutoLoop = 0; sc.UpdateAlways = 1; 
         sc.ReceivePointerEvents = ACS_RECEIVE_POINTER_EVENTS_WHEN_ACS_BUTTON_ENABLED;
         sc.ReceiveCharacterEvents = 1; sc.ScaleRangeType = SCALE_SAMEASREGION; 
@@ -140,11 +194,18 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         sc.Input[11].Name = "Search Range Bars (TF Stability)"; sc.Input[11].SetInt(10);
         sc.Input[12].Name = "Min Bars Cluster Visibility"; sc.Input[12].SetInt(3);
         sc.Input[13].Name = "Korekta przesunięcia GDI (piksele)"; sc.Input[13].SetInt(0);
+        sc.Input[14].Name = "Enable Trailing Focus"; sc.Input[14].SetYesNo(1);
 
         for (int i = 1; i <= 60; i++) {
             sc.Subgraph[i].Name.Format("Ring %d", i); sc.Subgraph[i].DrawStyle = DRAWSTYLE_CIRCLE_HOLLOW; 
             sc.Subgraph[i].LineWidth = 5; sc.Subgraph[i].PrimaryColor = RGB(65, 105, 225); 
             sc.Subgraph[i].DisplayNameValueInDataLine = 0; 
+            
+            // --- POPRAWKA: Oficjalne komendy ACSIL ---
+            // Wyłącza wyświetlanie w oknie "Chart Values" [cite: 531]
+            sc.Subgraph[i].DisplayNameValueInWindowsFlags = 0; 
+            // Wyłącza eksport do arkusza kalkulacyjnego [cite: 638]
+            sc.Subgraph[i].IncludeInSpreadsheet = 0; 
         }
         return;
     }
@@ -154,12 +215,35 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         pData = (DiNapoliData*)sc.AllocateMemory(sizeof(DiNapoliData));
         memset(pData, 0, sizeof(DiNapoliData)); sc.SetPersistentPointer(500, pData); LoadDiNapoliData(sc, pData);
     }
+
     s_UseTool* p_T = (s_UseTool*)sc.GetPersistentPointer(501);
     if (!p_T) {
         p_T = (s_UseTool*)sc.AllocateMemory(sizeof(s_UseTool));
         memset(p_T, 0, sizeof(s_UseTool)); sc.SetPersistentPointer(501, p_T);
     }
 
+    // --- ETAP 1: STATIC GDI PEN MANAGEMENT ---
+    HPEN* phPen = (HPEN*)sc.GetPersistentPointer(502);
+    if (!phPen) {
+        phPen = (HPEN*)sc.AllocateMemory(sizeof(HPEN));
+        *phPen = NULL; sc.SetPersistentPointer(502, phPen);
+    }
+
+    // --- POPRAWKA ETAPU 1: STATIC GDI PEN CLEANUP ---
+    if (sc.LastCallToFunction) {
+        if (phPen && *phPen) { 
+            DeleteObject(*phPen); 
+            *phPen = NULL; 
+        }
+        return;
+    }
+
+    if (sc.IsFullRecalculation || *phPen == NULL) {
+        if (*phPen) DeleteObject(*phPen);
+        // Zmieniamy na 1, aby pętla w GDI mogła narysować dokładnie 2 rzędy
+        *phPen = CreatePen(PS_SOLID, 1, sc.Input[3].GetColor());
+    }
+    // ------------------------------------------
     int Btn = sc.Input[0].GetInt(), RetrDelBtn = sc.Input[9].GetInt(), snapRange = sc.Input[6].GetInt();
     sc.SetCustomStudyControlBarButtonText(Btn, "DiNapoli"); sc.SetCustomStudyControlBarButtonText(RetrDelBtn, "RETR DEL"); 
     int& TState = sc.GetPersistentInt(1), &LastSize = sc.GetPersistentInt(4), &SessionSteps = sc.GetPersistentInt(3); 
@@ -168,7 +252,6 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
     bool IsVisible = (currentGlobalHide == 0);
     if (sc.Input[7].GetYesNo() && sc.MenuEventID == sc.Input[8].GetInt()) IsVisible = !IsVisible;
 
-    // [NUCLEAR ATOMIC RESET]
     if (sc.MenuEventID == RetrDelBtn) {
         for (int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
         for (int i = 0; i < 20; i++) for (int j = 0; j < SLOT_SIZE; j++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, RETR_BASE_ID + (i * SLOT_SIZE) + j);
@@ -206,6 +289,10 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
 
     if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == Btn) { TState = 1; SessionSteps = 0; }
     
+    // =========================================================================
+    // 🛑 [FROZEN BLOCK START]: LVS & PYRAMID GUARD (INTERACTION)
+    // DO NOT MODIFY - PROTECTS THE 1-TICK BUMPER AND PYRAMID MONOTONICITY
+    // =========================================================================
     if (TState > 0) {
         SCDateTime sTime = sc.GetPersistentSCDateTime(10);
         int fType = sc.GetPersistentInt(11);
@@ -241,66 +328,129 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
             }
         }
     }
+    // =========================================================================
+    // 🛑 [FROZEN BLOCK END]
+    // =========================================================================
 
-    bool trailingUpdated = false; SCDateTime sA = sc.GetPersistentSCDateTime(10);
-    for (int i = 0; i < pData->numSaved; i++) {
-        SavedRetracement& r = pData->retracements[i]; int startScan = max(r.idxF, r.lastCheckedIdx);
-        for (int j = startScan; j < sc.ArraySize; j++) { 
-            if ((r.type == 1 && sc.High[j] > r.pF) || (r.type == 2 && sc.Low[j] < r.pF)) { 
-                r.pF = (r.type == 1) ? sc.High[j] : sc.Low[j]; r.tF = sc.BaseDateTimeIn[j]; r.idxF = j; RefreshRetracementStrings(sc, r); trailingUpdated = true; 
-                if (TState > 0 && fabs(r.tF.GetAsDouble() - sA.GetAsDouble()) < 0.0000001) { sc.GetPersistentFloat(10) = r.pF; sc.GetPersistentSCDateTime(10) = r.tF; }
-            } 
+    // --- IMPLEMENTACJA KONCEPCJI 1 (IMMUNITET SESYJNY) ---
+    bool trailingUpdated = false; 
+    if (sc.Input[14].GetYesNo()) {
+        SCDateTime sA = sc.GetPersistentSCDateTime(10);
+        for (int i = 0; i < pData->numSaved; i++) {
+            SavedRetracement& r = pData->retracements[i];
+            
+            // Bypass dla siatek z aktywnej sesji: Zapobiega zrywaniu synchronizacji (isCurSes) w Preview
+            if (TState > 0 && fabs(r.tF.GetAsDouble() - sA.GetAsDouble()) < 0.0000001) continue;
+
+            int startScan = max(r.idxF, r.lastCheckedIdx);
+            for (int j = startScan; j < sc.ArraySize; j++) { 
+                if ((r.type == 1 && sc.High[j] > r.pF) || (r.type == 2 && sc.Low[j] < r.pF)) { 
+                    r.pF = (r.type == 1) ? sc.High[j] : sc.Low[j]; r.tF = sc.BaseDateTimeIn[j]; r.idxF = j; RefreshRetracementStrings(sc, r); trailingUpdated = true; 
+                } 
+            }
+            r.lastCheckedIdx = sc.ArraySize - 1;
         }
-        r.lastCheckedIdx = sc.ArraySize - 1;
     }
     if (trailingUpdated) SaveDiNapoliData(sc, pData);
 
-    // [REDRAW GATE & GPU GUARD]
-    bool needsRedraw = (sc.ArraySize != LastSize) || (sc.IndexOfFirstVisibleBar != LastLeftIdx) || (currentGlobalHide != LastSyncValue) || sc.IsFullRecalculation || trailingUpdated || (TState > 0 && sc.PointerEventType == SC_POINTER_MOVE);
+    // =========================================================================
+    // 🛑 [FROZEN BLOCK START]: PIXEL-PERFECT NUDGE (GETYADJ)
+    // DO NOT MODIFY - PROTECTS LABEL HIT TOLERANCE AND ASYMMETRIC NUDGE
+    // =========================================================================
+
+// Bramka Redraw z synchronizacją HIDE
+    
+bool needsRedraw = (sc.ArraySize != LastSize) 
+                    || (sc.IndexOfFirstVisibleBar != LastLeftIdx) 
+                    || (currentGlobalHide != LastSyncValue) 
+                    || (sc.Input[7].GetYesNo() && sc.MenuEventID == sc.Input[8].GetInt())
+                    || sc.IsFullRecalculation 
+                    || trailingUpdated 
+                    || (TState > 0 && sc.PointerEventType == SC_POINTER_MOVE);
+
     bool cacheMissing = false;
     auto GetYAdjPr = [&](float p, bool isHigh) -> float {
         int pY = sc.RegionValueToYPixelCoordinate(p, sc.GraphRegion);
         if (pY == 0) { cacheMissing = true; return p; }
-        return (float)sc.YPixelCoordinateToGraphValue(pY + (isHigh ? 0 : 1));
+        // Ujednolicony Nudge: +1px dla High (dół świecy to High), 0px dla Low
+        return (float)sc.YPixelCoordinateToGraphValue(pY + (isHigh ? 1 : 0));
     };
+
+
+    // =========================================================================
+    // 🛑 [FROZEN BLOCK END]
+    // =========================================================================
 
     if (IsVisible && (needsRedraw || TState > 0)) {
         for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) { sc.Subgraph[59][k] = 0; sc.Subgraph[60][k] = 0; }
+        SCDateTime sessionTime = sc.GetPersistentSCDateTime(10);
         for (int i = 0; i < pData->numSaved; i++) {
             SavedRetracement& r = pData->retracements[i];
-            bool isCurSes = (TState > 0 && fabs(r.tF.GetAsDouble() - sA.GetAsDouble()) < 0.0000001);
+            bool isCurSes = (TState > 0 && fabs(r.tF.GetAsDouble() - sessionTime.GetAsDouble()) < 0.0000001);
             if (!r.isVisibleOnCurrentTF && !isCurSes) continue;
             sc.Subgraph[i * 2 + 1][r.idxF] = GetYAdjPr(r.pF, (r.type == 1)); 
             sc.Subgraph[i * 2 + 2][r.idxR] = GetYAdjPr(r.pR, (r.type == 2));
             int idS = RETR_BASE_ID + (i * SLOT_SIZE), sX = sc.ArraySize + (r.step * r.dw100), connX = sX + r.dw100, tX = (sX + connX) / 2;
             float rng = r.pF - r.pR;
-            auto L = [&](float p, float v, COLORREF c, const char* n, int id, const char* label, int textIdx, int lineStartIdx, int lineEndIdx, int width) {
-                p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; p_T->BeginIndex = lineStartIdx; p_T->EndIndex = lineEndIdx; p_T->BeginValue = p; p_T->EndValue = p; p_T->Color = c; p_T->LineWidth = width; p_T->LineNumber = id; sc.UseTool(*p_T);
+         
+auto L = [&](float p, float v, COLORREF c, const char* n, int id, const char* label, int textIdx, int lineStartIdx, int lineEndIdx, int width) {
+                int yCoord = sc.RegionValueToYPixelCoordinate(p, sc.GraphRegion);
+                if (yCoord == 0) { cacheMissing = true; return; }
+
+                // Rysuj linię TYLKO jeśli szerokość > 0 (blokuje to rysowanie poziomu 1.000 przez ten silnik)
+                if (width > 0) {
+                    p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; p_T->BeginIndex = lineStartIdx; p_T->EndIndex = lineEndIdx; p_T->BeginValue = p; p_T->EndValue = p; p_T->Color = c; p_T->LineWidth = width; p_T->LineNumber = id; sc.UseTool(*p_T);
+                }
+                
                 p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_TEXT; p_T->BeginIndex = textIdx; p_T->BeginValue = p; p_T->Color = c; p_T->FontFace = "Arial"; p_T->FontSize = 8; p_T->FontBold = 1; p_T->Text = label; p_T->TextAlignment = DT_CENTER | DT_BOTTOM; p_T->LineNumber = id + 1; sc.UseTool(*p_T);
                 p_T->Text = n; p_T->BeginValue = GetYAdjPr(v, true); p_T->TextAlignment = DT_CENTER | DT_TOP; p_T->LineNumber = id + 2; sc.UseTool(*p_T);
             };
+
+
             L(r.pR, r.pR, sc.Input[3].GetColor(), "1.000", idS + 3, r.s100, tX, r.idxR, connX, 0); 
             L(sc.RoundToTickSize(r.pF - rng * 0.382f), sc.RoundToTickSize(r.pF - rng * 0.382f), sc.Input[1].GetColor(), "0.382", idS + 6, r.s38, tX, sX, connX, 1);
             L(sc.RoundToTickSize(r.pF - rng * 0.618f), sc.RoundToTickSize(r.pF - rng * 0.618f), sc.Input[2].GetColor(), "0.618", idS + 9, r.s61, tX, sX, connX, 1);
             p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; p_T->LineStyle = LINESTYLE_DOT; p_T->BeginIndex = connX; p_T->EndIndex = connX; p_T->BeginValue = r.pR; p_T->EndValue = sc.RoundToTickSize(r.pF - rng * 0.382f); p_T->Color = RGB(160, 160, 160); p_T->LineNumber = idS + 12; sc.UseTool(*p_T);
         }
+        
         if (TState == 2) {
             float lvsP = sc.GetPersistentFloat(12); int lvsI = sc.GetPersistentInt(13);
             SavedRetracement pr; memset(&pr, 0, sizeof(SavedRetracement)); 
-            pr.pF = sc.GetPersistentFloat(10); pr.tF = sc.GetPersistentSCDateTime(10); pr.idxF = sc.GetContainingIndexForSCDateTime(sc.ChartNumber, pr.tF);
-            pr.pR = lvsP; pr.idxR = lvsI; pr.type = sc.GetPersistentInt(11); pr.step = SessionSteps; RefreshRetracementStrings(sc, pr);
-            sc.Subgraph[59][pr.idxF] = GetYAdjPr(pr.pF, (pr.type == 1)); sc.Subgraph[60][pr.idxR] = GetYAdjPr(pr.pR, (pr.type == 2));
+            pr.pF = sc.GetPersistentFloat(10); pr.tF = sc.GetPersistentSCDateTime(10); 
+            pr.idxF = sc.GetContainingIndexForSCDateTime(sc.ChartNumber, pr.tF);
+            pr.pR = lvsP; pr.idxR = lvsI; pr.type = sc.GetPersistentInt(11); pr.step = SessionSteps; 
+            
+            RefreshRetracementStrings(sc, pr);
+            sc.GetPersistentInt(14) = pr.dw100; // Hoisting dla GDI
+            
+            // Zabezpieczenie przed błędem indeksu (-1), rysowanie poziomów mimo "złego" Focusa
+            if (pr.idxF >= 0 && pr.idxF < sc.ArraySize) sc.Subgraph[59][pr.idxF] = GetYAdjPr(pr.pF, (pr.type == 1)); 
+            if (pr.idxR >= 0 && pr.idxR < sc.ArraySize) sc.Subgraph[60][pr.idxR] = GetYAdjPr(pr.pR, (pr.type == 2));
+            
             int sX = sc.ArraySize + (pr.step * pr.dw100), connX = sX + pr.dw100, tX = (sX + connX) / 2; float rng = pr.pF - pr.pR;
-            auto L = [&](float p, float v, COLORREF c, const char* n, int id, const char* label, int textIdx, int lineStartIdx, int lineEndIdx) {
+auto L = [&](float p, float v, COLORREF c, const char* n, int id, const char* label, int textIdx, int lineStartIdx, int lineEndIdx) {
+                // --- ETAP 3 RE-FIX: SURGICAL ZERO-GUARD (PREVIEW) + CACHE SIGNAL ---
+                int yCoord = sc.RegionValueToYPixelCoordinate(p, sc.GraphRegion);
+                if (yCoord == 0) { cacheMissing = true; return; }
+
+
                 p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; p_T->BeginIndex = lineStartIdx; p_T->EndIndex = lineEndIdx; p_T->BeginValue = p; p_T->EndValue = p; p_T->Color = c; p_T->LineWidth = 1; p_T->LineNumber = id; sc.UseTool(*p_T);
-                p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_TEXT; p_T->BeginIndex = textIdx; p_T->BeginValue = p; p_T->Color = c; p_T->FontFace = "Arial"; p_T->FontSize = 8; p_T->FontBold = 1; p_T->Text = label; p_T->TextAlignment = DT_CENTER | DT_BOTTOM; p_T->LineNumber = id + 1; sc.UseTool(*p_T);
+              p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_TEXT; p_T->BeginIndex = textIdx; p_T->BeginValue = p; p_T->Color = c; p_T->FontFace = "Arial"; p_T->FontSize = 8; p_T->FontBold = 1; p_T->Text = label; p_T->TextAlignment = DT_CENTER | DT_BOTTOM; p_T->LineNumber = id + 1; sc.UseTool(*p_T);
                 p_T->Text = n; p_T->BeginValue = GetYAdjPr(v, true); p_T->TextAlignment = DT_CENTER | DT_TOP; p_T->LineNumber = id + 2; sc.UseTool(*p_T);
             };
             L(sc.RoundToTickSize(pr.pF - rng * 0.382f), sc.RoundToTickSize(pr.pF - rng * 0.382f), sc.Input[1].GetColor(), "0.382", 10000 + 6, pr.s38, tX, sX, connX);
             L(sc.RoundToTickSize(pr.pF - rng * 0.618f), sc.RoundToTickSize(pr.pF - rng * 0.618f), sc.Input[2].GetColor(), "0.618", 10000 + 9, pr.s61, tX, sX, connX);
             p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; p_T->LineStyle = LINESTYLE_DOT; p_T->BeginIndex = connX; p_T->EndIndex = connX; p_T->BeginValue = pr.pR; p_T->EndValue = sc.RoundToTickSize(pr.pF - rng * 0.382f); p_T->Color = RGB(160, 160, 160); p_T->LineNumber = 10000 + 12; sc.UseTool(*p_T);
         }
-        LastSize = sc.ArraySize; LastLeftIdx = sc.IndexOfFirstVisibleBar; LastSyncValue = currentGlobalHide; if (cacheMissing) LastSize = -1;
+        
+        // --- ETAP 3 RE-FIX: SMART GATE KEEPER ---
+        if (!cacheMissing) {
+            LastSize = sc.ArraySize; 
+            LastLeftIdx = sc.IndexOfFirstVisibleBar; 
+            LastSyncValue = currentGlobalHide;
+        } else {
+            LastSize = -1; 
+        }
     } else if (!IsVisible && LastSize != -2) {
         for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
         for(int i = 0; i < 20; i++) for(int j = 0; j < SLOT_SIZE; j++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, RETR_BASE_ID + (i * SLOT_SIZE) + j);
