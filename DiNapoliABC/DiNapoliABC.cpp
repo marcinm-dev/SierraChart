@@ -149,7 +149,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
 {
     // --- 1. KONFIGURACJA (ZAMROŻONA) ---
     if (sc.SetDefaults) {
-        sc.GraphName = "DiNapoli Expansion (v_ULTRA_STABLE_LIVE_PIXELS)";
+        sc.GraphName = "DiNapoli Expansion";
         sc.GraphRegion = 0; sc.AutoLoop = 0; sc.UpdateAlways = 1;
         sc.ReceivePointerEvents = ACS_RECEIVE_POINTER_EVENTS_WHEN_ACS_BUTTON_ENABLED;
         sc.ReceiveCharacterEvents = 1; 
@@ -212,13 +212,14 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
 
     static int cachedHideMenuID = -1; 
 
-    sc.SetCustomStudyControlBarButtonText(DrawBtn, "Expansion");
+    sc.SetCustomStudyControlBarButtonText(DrawBtn, "ABC");
     sc.SetCustomStudyControlBarButtonText(HideBtn, "HIDE");
     sc.SetCustomStudyControlBarButtonText(LastDelBtn, "LAST DEL");
     sc.SetCustomStudyControlBarButtonText(AllDelBtn, "ALL DEL");
 
     int currentGlobalHide = sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT);
 
+    // --- 3. SYNCHRONIZACJA (MASTER PROTOCOL) ---
     if (sc.Input[7].GetYesNo() == 1 && sc.MenuEventID == HideBtn) {
         int newState = (currentGlobalHide == 0) ? 1 : 0;
         sc.SetPersistentIntForChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT, newState);
@@ -231,12 +232,14 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
             ::PostMessage(hRoot, WM_COMMAND, menuIDtoSend, 0);
         }
         sc.SetCustomStudyControlBarButtonEnable(HideBtn, 0); 
-        sc.MenuEventID = 0; currentGlobalHide = newState; LastSize = -1; 
+        
+        // KONCEPCJA 7: Usunięto sc.MenuEventID = 0, aby sygnał "HIDE" popłynął do narzędzi Slave.
+        currentGlobalHide = newState; LastSize = -1; 
     }
 
     bool IsVisible = (currentGlobalHide == 0);
 
-    // --- 3. USUWANIE ---
+    // --- 4. USUWANIE ---
     if (sc.MenuEventID == LastDelBtn) {
         if (pData->numSaved > 0) {
             int lastIdx = pData->numSaved - 1;
@@ -259,7 +262,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         sc.MenuEventID = 0;
     }
 
-    // --- 4. TF STABILITY (ONLY INDEX CACHING) ---
+    // --- 5. TF STABILITY (ONLY INDEX CACHING) ---
     if (sc.IsFullRecalculation || LastSize == -1) {
         for (int i = 1; i <= 60; i++) for (int k = 0; k < sc.ArraySize; k++) sc.Subgraph[i][k] = 0;
         for (int i = 0; i < pData->numSaved; i++) {
@@ -272,7 +275,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         }
     }
 
-    // --- 5. INTERACTION ---
+    // --- 6. INTERACTION ---
     if (sc.CharacterEventCode == 32 && TState > 0) {
         for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
         TState = 0; sc.SetCustomStudyControlBarButtonEnable(DrawBtn, 0); LastSize = -1;
@@ -311,7 +314,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         }
     }
 
-    // --- 6. REDRAW GATE ---
+    // --- 7. REDRAW GATE ---
     bool needsRedraw = (sc.ArraySize != LastSize) || (sc.IndexOfFirstVisibleBar != LastLeftIdx) || (currentGlobalHide != LastSyncValue) || sc.IsFullRecalculation || (TState > 0);
     bool cacheMissing = false; 
 
@@ -327,7 +330,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         for (int i = 58; i <= 60; i++) for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) sc.Subgraph[i][k] = 0;
     }
 
-    // --- 7. RENDERER (LIVE PIXELS & HOISTED STRINGS) ---
+    // --- 8. RENDERER (LIVE PIXELS & HOISTED STRINGS) ---
     auto DrawExpansionPreformatted = [&](const SavedExpansion& exp, int idS, int subStart, bool drawLevels, bool isPreview) {
         if (exp.pA <= 0 || exp.idxA < 0) return;
         if (!isPreview && !exp.isVisibleOnCurrentTF) return;
