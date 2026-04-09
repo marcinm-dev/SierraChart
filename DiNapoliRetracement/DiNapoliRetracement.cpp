@@ -194,8 +194,9 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         sc.Input[9].Name = "Przycisk RETR DEL"; sc.Input[9].SetInt(23); 
         sc.Input[11].Name = "Search Range Bars (TF Stability)"; sc.Input[11].SetInt(10);
         sc.Input[12].Name = "Min Bars Cluster Visibility"; sc.Input[12].SetInt(3);
-        sc.Input[13].Name = "Korekta przesunięcia GDI (piksele)"; sc.Input[13].SetInt(0);
-        sc.Input[14].Name = "Enable Trailing Focus"; sc.Input[14].SetYesNo(1);
+       sc.Input[13].Name = "Korekta przesunięcia GDI (piksele)"; sc.Input[13].SetInt(0);
+        sc.Input[14].Name = "GPU Safe-Lock Frames (Offline)"; sc.Input[14].SetInt(10);
+        sc.Input[15].Name = "Enable Trailing Focus"; sc.Input[15].SetYesNo(1);
 
         for (int i = 1; i <= 60; i++) {
             sc.Subgraph[i].Name.Format("Ring %d", i); sc.Subgraph[i].DrawStyle = DRAWSTYLE_CIRCLE_HOLLOW; 
@@ -246,24 +247,31 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
     }
     // ------------------------------------------
     int Btn = sc.Input[0].GetInt(), RetrDelBtn = sc.Input[9].GetInt(), snapRange = sc.Input[6].GetInt();
-    sc.SetCustomStudyControlBarButtonText(Btn, "DiNapoli"); sc.SetCustomStudyControlBarButtonText(RetrDelBtn, "RETR DEL"); 
+    sc.SetCustomStudyControlBarButtonText(Btn, "RETR"); sc.SetCustomStudyControlBarButtonText(RetrDelBtn, "RETR DEL"); 
     int& TState = sc.GetPersistentInt(1), &LastSize = sc.GetPersistentInt(4), &SessionSteps = sc.GetPersistentInt(3); 
     int& LastSyncValue = sc.GetPersistentInt(15), &LastLeftIdx = sc.GetPersistentInt(16);
     
    
-// --- ETAP 3: CONDITIONAL SYNC & SOFT REDRAW ---
+
+// --- ETAP 3: CONDITIONAL SYNC & GPU SAFE-LOCK ---
+    int& StabCounter = sc.GetPersistentInt(31); 
+    if (sc.IsFullRecalculation) StabCounter = sc.Input[14].GetInt();
+
     int syncBtn = sc.Input[8].GetInt();
     int currentGlobalHide = sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT);
     bool isSyncImpulse = (sc.Input[7].GetYesNo() && sc.MenuEventID == syncBtn);
     
     bool effectiveIsVisible = (currentGlobalHide == 0);
     if (isSyncImpulse) {
+        StabCounter = sc.Input[14].GetInt(); // OPTYMALIZACJA: Stabilizacja przy wybudzaniu
         LastSize = -1; // Soft Redraw Signal - wymusza otwarcie bramki
         if (currentGlobalHide == LastSyncValue) {
             effectiveIsVisible = !effectiveIsVisible;
             LastSyncValue = effectiveIsVisible ? 0 : 1; // Wyrównanie predykcyjne
         }
     }
+
+
     // Most decyzyjny (Single Source of Truth) dla silnika GDI
     sc.SetPersistentInt(5, effectiveIsVisible ? 1 : 0);
 
@@ -349,9 +357,10 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
     // 🛑 [FROZEN BLOCK END]
     // =========================================================================
 
-    // --- IMPLEMENTACJA KONCEPCJI 1 (IMMUNITET SESYJNY) ---
+// --- IMPLEMENTACJA KONCEPCJI 1 (IMMUNITET SESYJNY) ---
     bool trailingUpdated = false; 
-    if (sc.Input[14].GetYesNo()) {
+    if (sc.Input[15].GetYesNo()) {
+
         SCDateTime sA = sc.GetPersistentSCDateTime(10);
         for (int i = 0; i < pData->numSaved; i++) {
             SavedRetracement& r = pData->retracements[i];
@@ -375,10 +384,11 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
     // DO NOT MODIFY - PROTECTS LABEL HIT TOLERANCE AND ASYMMETRIC NUDGE
     // =========================================================================
 
-// --- ETAP 3: CLEAN EVENT-DRIVEN REDRAW GATE ---
+// --- ETAP 3: CLEAN EVENT-DRIVEN REDRAW GATE (GPU SAFE-LOCK) ---
     bool needsRedraw = (sc.ArraySize != LastSize) 
                         || (sc.IndexOfFirstVisibleBar != LastLeftIdx) 
                         || (currentGlobalHide != LastSyncValue) 
+                        || (StabCounter > 0)
                         || isSyncImpulse 
                         || sc.IsFullRecalculation 
                         || trailingUpdated 
@@ -388,8 +398,16 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
     auto GetYAdjPr = [&](float p, bool isHigh) -> float {
         int pY = sc.RegionValueToYPixelCoordinate(p, sc.GraphRegion);
         if (pY == 0) { cacheMissing = true; return p; }
-        // Ujednolicony Nudge: +1px dla High (dół świecy to High), 0px dla Low
-        return (float)sc.YPixelCoordinateToGraphValue(pY + (isHigh ? 1 : 0));
+        
+        float yResult = (float)sc.YPixelCoordinateToGraphValue(pY + (isHigh ? 1 : 0));
+
+        // Weryfikacja wiarygodności (Standard Ultra-Stable 2026)
+        // Forex fix: 0.00001f zamiast 1.0f dla wsparcia par walutowych
+        if (yResult <= 0.00001f || (p > 0.00001f && fabsf(yResult - p) / p > 0.20f)) { 
+            cacheMissing = true; 
+            return p; 
+        }
+        return yResult;
     };
 
 
@@ -459,14 +477,22 @@ auto L = [&](float p, float v, COLORREF c, const char* n, int id, const char* la
             p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; p_T->LineStyle = LINESTYLE_DOT; p_T->BeginIndex = connX; p_T->EndIndex = connX; p_T->BeginValue = pr.pR; p_T->EndValue = sc.RoundToTickSize(pr.pF - rng * 0.382f); p_T->Color = RGB(160, 160, 160); p_T->LineNumber = 10000 + 12; sc.UseTool(*p_T);
         }
         
-        // --- ETAP 3 RE-FIX: SMART GATE KEEPER ---
+       
+// --- ETAP 3 RE-FIX: SMART GATE KEEPER & NUCLEAR HEARTBEAT ---
         if (!cacheMissing) {
             LastSize = sc.ArraySize; 
             LastLeftIdx = sc.IndexOfFirstVisibleBar; 
             LastSyncValue = currentGlobalHide;
         } else {
             LastSize = -1; 
+            // Nuclear Heartbeat: Wymusza przeliczenie w trybie Offline/Loading
+            if (sc.IsFullRecalculation != 0 || sc.DownloadingHistoricalData != 0) {
+                sc.FlagFullRecalculate = 1; 
+            }
         }
+        if (StabCounter > 0) StabCounter--;
+
+
    } else if (!effectiveIsVisible && LastSize != -2) {
         for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
         for(int i = 0; i < 20; i++) for(int j = 0; j < SLOT_SIZE; j++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, RETR_BASE_ID + (i * SLOT_SIZE) + j);
