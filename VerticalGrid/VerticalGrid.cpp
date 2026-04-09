@@ -1,115 +1,156 @@
 #include "sierrachart.h"
 
-SCDLLName("HorizontalVerticalGrid")
+SCDLLName("TN_VerticalGrid_GDI_Final") 
 
-// Pancerna metoda tygodnia (zamrożona)
+// Pomocnicza metoda tygodnia (ZAMROŻONA)
 int GetWeekManual(int dateValue) { return dateValue / 7; }
 
-SCSFExport scsf_HorizontalVerticalGrid(SCStudyInterfaceRef sc)
+// Prototyp funkcji rysującej GDI (Silnik Stipple)
+void DrawVerticalGridGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc);
+
+/*==========================================================================*/
+SCSFExport scsf_VerticalGridTN(SCStudyInterfaceRef sc)
 {
-    // --- WEJŚCIA (ZAMROŻONE) ---
-    SCInputRef InVColor = sc.Input[0];
-    SCInputRef InVDensity = sc.Input[1];
+	SCInputRef Input_GridColor = sc.Input[0];
+	SCInputRef Input_Spacing = sc.Input[1];
+	SCInputRef Input_GapSize = sc.Input[2];
 
-    if (sc.SetDefaults)
-    {
-        sc.GraphName = "HorizontalVerticalGrid (V17 Fix M5/M10)";
-        sc.GraphRegion = 0;
-        sc.AutoLoop = 0; 
-        sc.UpdateAlways = 0; 
+	if (sc.SetDefaults)
+	{
+		sc.GraphName = "Vertical Grid TN (GDI FINAL)";
+		sc.StudyDescription = "Profesjonalna siatka GDI pod słupkami ceny (TradeNavigator Style).";
 
-        InVColor.Name = "Vertical Grid Color";
-        InVColor.SetColor(RGB(128, 128, 128));
-        InVDensity.Name = "Vertical Spacing (Show every N-th)";
-        InVDensity.SetInt(1);
+		sc.AutoLoop = 0;           
+		sc.GraphRegion = 0;        
+		sc.FreeDLL = 0;            
 
-        return;
-    }
+		// Rejestracja niskopoziomowego silnika GDI
+		sc.p_GDIFunction = DrawVerticalGridGDI;
+		
+		// Warstwa tła (pod słupkami ceny)
+		sc.DrawStudyUnderneathMainPriceGraph = 1;
 
-    // --- OPTYMALIZACJA I REAKCJA NA RUCH ---
-    bool IsFullRecalc = (sc.Index == 0);
-    bool IsNewBar = (sc.ArraySize != sc.GetPersistentInt(10));
-    bool IsScroll = (sc.IndexOfFirstVisibleBar != sc.GetPersistentInt(11));
-    
-    if (!IsFullRecalc && !IsNewBar && !IsScroll) return;
-    
-    sc.SetPersistentInt(10, sc.ArraySize);
-    sc.SetPersistentInt(11, sc.IndexOfFirstVisibleBar);
+		Input_GridColor.Name = "Grid Line Color";
+		Input_GridColor.SetColor(RGB(128, 128, 128)); 
 
-    // --- PROFESJONALNA DETEKCJA INTERWAŁU ---
-    int targetPeriod = 0; 
-    if (sc.IsIntradayChart()) 
-    {
-        // Jeśli H1 lub więcej (H1 = 3600s, H4 = 14400s)
-        if (sc.SecondsPerBar >= 3600) targetPeriod = 1; // Grid Weekly
-        else targetPeriod = 0; // Grid Daily (dla M1, M5, M10, M15 itd.)
-    }
-    else // Wykresy Daily, Weekly, Monthly, Yearly
-    {
-        if (sc.TimePeriodType == TIME_PERIOD_LENGTH_UNIT_DAYS) targetPeriod = 2; // Grid Monthly
-        else if (sc.TimePeriodType == TIME_PERIOD_LENGTH_UNIT_YEARS) targetPeriod = 4; // Grid 10Y
-        else targetPeriod = 3; // Grid Yearly (dla Weekly/Monthly)
-    }
+		Input_Spacing.Name = "Vertical Spacing (Every N periods)";
+		Input_Spacing.SetInt(1);
+		Input_Spacing.SetIntLimits(1, 100);
 
-    // --- RENDERER (DYNAMIKA I CZYSZCZENIE) ---
-    
-    // CZYSZCZENIE POPRZEDNIEGO RENDERU (Zapobiega "duchom" przy scrollowaniu)
-    for (int id = 60000; id < 60500; id++) {
-        sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
-    }
+		Input_GapSize.Name = "Line Gap Size (Pixels)";
+		Input_GapSize.SetInt(6); 
+		Input_GapSize.SetIntLimits(1, 50);
 
-    int drawingID = 60000; 
-    s_UseTool T;
-    T.Clear();
-    T.DrawingType = DRAWING_VERTICALLINE; 
-    T.Color = InVColor.GetColor();
-    T.LineStyle = LINESTYLE_DOT; 
-    T.LineWidth = 1;
-    T.AddMethod = UTAM_ADD_ALWAYS; // Używamy ADD_ALWAYS bo czyścimy ID ręcznie
+		return;
+	}
 
-    // Zakres: tylko widoczne bary
-    int startIdx = sc.IndexOfFirstVisibleBar;
-    if (startIdx < 1) startIdx = 1;
-    int endIdx = sc.IndexOfLastVisibleBar;
-    if (endIdx >= sc.ArraySize) endIdx = sc.ArraySize - 1;
+	// Mechanizm czyszczenia starych rysunków s_UseTool (ZAMROŻONY)
+	int& r_LastMaxIndex = sc.GetPersistentInt(1);
+	if (sc.IsFullRecalculation)
+	{
+		for (int i = 0; i <= r_LastMaxIndex; i++)
+		{
+			sc.DeleteACSChartDrawing(sc.ChartNumber, DRAWING_VERTICALLINE, 60000 + i);
+		}
+		r_LastMaxIndex = 0;
+	}
+}
 
-    for (int i = startIdx; i <= endIdx; i++)
-    {
-        bool isNew = false;
-        
-        // Stabilne pobieranie dat dla przejść
-        int tDateC = (int)sc.GetTradingDayDate(sc.BaseDateTimeIn[i]);
-        int tDateP = (int)sc.GetTradingDayDate(sc.BaseDateTimeIn[i-1]);
+/*==========================================================================*/
+// SILNIK GRAFICZNY GDI (Stage 3 - Stipple Engine)
+/*==========================================================================*/
+void DrawVerticalGridGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc)
+{
+	if (sc.ArraySize < 2) return;
 
-        if (targetPeriod == 0) { // < H1 -> Daily
-            isNew = (tDateC != tDateP);
-        }
-        else if (targetPeriod == 1) { // H1-H4 -> Weekly
-            isNew = (GetWeekManual(tDateC) != GetWeekManual(tDateP));
-        }
-        else if (targetPeriod == 2) { // Daily -> Monthly
-            int yC, mC, dC, yP, mP, dP;
-            sc.BaseDateTimeIn[i].GetDateYMD(yC, mC, dC);
-            sc.BaseDateTimeIn[i-1].GetDateYMD(yP, mP, dP);
-            isNew = (mC != mP || yC != yP);
-        }
-        else if (targetPeriod == 3) { // Weekly/Monthly -> Yearly
-            int yC, mC, dC, yP, mP, dP;
-            sc.BaseDateTimeIn[i].GetDateYMD(yC, mC, dC);
-            sc.BaseDateTimeIn[i-1].GetDateYMD(yP, mP, dP);
-            isNew = (yC != yP);
-        }
-        else if (targetPeriod == 4) { // Yearly -> 10Y
-            int yC, mC, dC, yP, mP, dP;
-            sc.BaseDateTimeIn[i].GetDateYMD(yC, mC, dC);
-            sc.BaseDateTimeIn[i-1].GetDateYMD(yP, mP, dP);
-            isNew = (yC/10 != yP/10);
-        }
+	// 1. Logika mapowania interwałów (ZAMROŻONA)
+	int TargetGridType = 0; 
+	if (sc.ChartDataType == 2) { // Intraday
+		if (sc.SecondsPerBar < 3600) TargetGridType = 1; 
+		else TargetGridType = 2; 
+	} else { // Historical
+		double DaysDiff = sc.BaseDateTimeIn[sc.ArraySize-1].GetAsDouble() - sc.BaseDateTimeIn[sc.ArraySize-2].GetAsDouble();
+		if (DaysDiff <= 4.0) TargetGridType = 3; 
+		else if (DaysDiff <= 32.0) TargetGridType = 4; 
+		else TargetGridType = 5; 
+	}
 
-        if (isNew && drawingID < 60500) {
-            T.LineNumber = drawingID++;
-            T.BeginIndex = i; 
-            sc.UseTool(T);
-        }
-    }
+	// Poprawka 3: Sanity Check - zabezpieczenie przed błędną wysokością regionu
+	int top    = sc.StudyRegionTopCoordinate;
+	int bottom = sc.StudyRegionBottomCoordinate;
+	if (top >= bottom) return;
+
+	// Poprawka 1: Ochrona osi (Clipping Region) - blokujemy malowanie poza wykres
+	HRGN hRgn = CreateRectRgn(sc.StudyRegionLeftCoordinate, top, sc.StudyRegionRightCoordinate, bottom);
+	SelectClipRgn(hDC, hRgn);
+
+	// 2. Konfiguracja narzędzi malarskich GDI
+	COLORREF GridColor = sc.Input[0].GetColor();
+	HPEN hPen = CreatePen(PS_SOLID, 1, GridColor);
+	HGDIOBJ hOldPen = SelectObject(hDC, hPen);
+
+
+	// 3. Cache parametrów (Optymalizacja "Micro-Lag")
+	const int StartBar = sc.IndexOfFirstVisibleBar; 
+	const int EndBar   = sc.ArraySize + 200; // Stabilna ekstrapolacja V8
+	const int Spacing  = sc.Input[1].GetInt();
+	const int GapSize  = sc.Input[2].GetInt();
+
+	for (int i = StartBar; i < EndBar; i++)
+	{
+		// Zabezpieczenie zakresu tablicy (indeks -1)
+		if (i <= 0 || i >= sc.ArraySize + 200) continue;
+
+		// Korzystamy z faktu, że Sierra pre-wypełnia tablicę dla Forward Projection
+		SCDateTime CurrentDT = sc.BaseDateTimeIn[i];
+		SCDateTime PrevDT    = sc.BaseDateTimeIn[i-1];
+		
+		if (CurrentDT == 0 || PrevDT == 0) continue;
+
+		bool IsNewPeriod = false;
+
+		// Logika detekcji sesji (ZAMROŻONA - Futures Friendly)
+		if (TargetGridType == 1) { 
+			if (sc.GetTradingDayDate(CurrentDT) != sc.GetTradingDayDate(PrevDT)) IsNewPeriod = true;
+		}
+		else if (TargetGridType == 2) { 
+			if (GetWeekManual(sc.GetTradingDayDate(CurrentDT)) != GetWeekManual(sc.GetTradingDayDate(PrevDT))) IsNewPeriod = true;
+		}
+		else if (TargetGridType == 3) { 
+			if (CurrentDT.GetMonth() != PrevDT.GetMonth()) IsNewPeriod = true;
+		}
+		else if (TargetGridType == 4) { 
+			if (CurrentDT.GetYear() != PrevDT.GetYear()) IsNewPeriod = true;
+		}
+		else if (TargetGridType == 5) { 
+			if ((CurrentDT.GetYear() / 10) != (PrevDT.GetYear() / 10)) IsNewPeriod = true;
+		}
+
+		// Rysowanie z użyciem zoptymalizowanych zmiennych lokalnych
+		if (IsNewPeriod && (i % Spacing == 0))
+		{
+			int x_current = sc.BarIndexToXPixelCoordinate(i);
+			int x_previous = sc.BarIndexToXPixelCoordinate(i - 1);
+
+			if (abs(x_current - x_previous) < 2) continue; 
+
+			int x = (x_current + x_previous) / 2;
+			
+			for (int y_pos = top; y_pos < bottom; y_pos += (3 + GapSize))
+			{
+
+
+				int segment_end = y_pos + 3;
+				if (segment_end > bottom) segment_end = bottom;
+				
+				MoveToEx(hDC, x, y_pos, NULL);
+				LineTo(hDC, x, segment_end);
+			}
+		}
+	}
+// 4. Zwolnienie zasobów GDI i usunięcie bariery clippingu
+	SelectClipRgn(hDC, NULL);
+	DeleteObject(hRgn);
+	SelectObject(hDC, hOldPen);
+	DeleteObject(hPen);
 }

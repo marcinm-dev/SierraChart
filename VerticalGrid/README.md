@@ -4,6 +4,7 @@ A dotted vertical time grid for Sierra Chart drawn with GDI. The grid spacing fo
 
 ## Versions
 
-Versions are git tags: `verticalgrid-v4`.
+Versions are git tags: `verticalgrid-v4`, `verticalgrid-v7`.
 
 - **V4**: First attempt at an automatic vertical grid using vertical line drawing tools (incomplete, abandoned).
+- **V7**: First fully working version, the grid is painted with GDI instead of drawing tools.
