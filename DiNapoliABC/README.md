@@ -4,7 +4,7 @@ A Sierra Chart ACSIL study that recreates the DiNapoli expansion tool from Trade
 
 ## Versions
 
-Versions are git tags: `dinapoliabc-v13`, `dinapoliabc-v14`, `dinapoliabc-v15`, `dinapoliabc-v18`, `dinapoliabc-v19`, `dinapoliabc-v19b`, `dinapoliabc-v20`, `dinapoliabc-v21`, `dinapoliabc-v22`.
+Versions are git tags: `dinapoliabc-v13`, `dinapoliabc-v14`, `dinapoliabc-v15`, `dinapoliabc-v18`, `dinapoliabc-v19`, `dinapoliabc-v19b`, `dinapoliabc-v20`, `dinapoliabc-v21`, `dinapoliabc-v22`, `dinapoliabc-v23`.
 
 - **V13**: First saved version: three-click A-B-C expansion tool with 0.618, 1.000 and 1.618 levels, throttled redraw, cached bar indexes and pre-formatted price strings.
 - **V14**: Chart range and the Hide Chart Drawings menu ID computed once instead of on every redraw.
@@ -15,3 +15,4 @@ Versions are git tags: `dinapoliabc-v13`, `dinapoliabc-v14`, `dinapoliabc-v15`, 
 - **V20**: Binary-safe saved data (packed structs, fixed strings), Min Bars Visibility Threshold input and cached menu ID.
 - **V21**: HIDE impulse is no longer consumed, so the Retracement study reacts to it at once (master-slave sync).
 - **V22**: Black reaction lines drawn with native GDI, offset from the ring (GDI offset input), pen created once.
+- **V23**: GPU safe-lock: rings redraw after an interval change (stabilisation frames input, forced recalculation) and a price guard for low-priced instruments.

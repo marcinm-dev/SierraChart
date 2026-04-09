@@ -276,6 +276,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
        sc.Input[11].Name = "Search Range Bars"; sc.Input[11].SetInt(10);
         sc.Input[12].Name = "Min Bars Visibility Threshold"; sc.Input[12].SetInt(3);
         sc.Input[13].Name = "Korekta przesunięcia GDI (piksele)"; sc.Input[13].SetInt(0);
+        sc.Input[14].Name = "GPU Safe-Lock Frames (Offline)"; sc.Input[14].SetInt(10); // Domyślnie 10 klatek
 
         sc.p_GDIFunction = DrawReactionGDI; // Rejestracja silnika GDI (Etap 1)
         sc.ScaleRangeType = SCALE_SAMEASREGION; // Zapobiega drganiom linii
@@ -433,11 +434,21 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         }
     }
 
-    // --- 7. REDRAW GATE ---
-    bool needsRedraw = (sc.ArraySize != LastSize) || (sc.IndexOfFirstVisibleBar != LastLeftIdx) || (currentGlobalHide != LastSyncValue) || sc.IsFullRecalculation || (TState > 0);
+// --- 7. REDRAW GATE (GPU Safe-Lock) ---
+    int& StabCounter = sc.GetPersistentInt(31); 
+    if (sc.IsFullRecalculation) StabCounter = sc.Input[14].GetInt();
+
+    bool needsRedraw = (sc.ArraySize != LastSize) || (LastSize == -1) || (StabCounter > 0) || 
+                       (sc.IndexOfFirstVisibleBar != LastLeftIdx) || (currentGlobalHide != LastSyncValue) || 
+                       sc.IsFullRecalculation || (TState > 0);
+    
     bool cacheMissing = false; 
 
-    if (currentGlobalHide != LastSyncValue) { LastSyncValue = currentGlobalHide; LastSize = -1; }
+    if (currentGlobalHide != LastSyncValue) { 
+        LastSyncValue = currentGlobalHide; 
+        LastSize = -1; 
+        StabCounter = 10; // Krótki impuls przy przełączaniu HIDE
+    }
 
     if (needsRedraw && IsVisible) {
         for (int i = 0; i < 20; i++) {
@@ -463,10 +474,11 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
 
             float yResult = (float)sc.YPixelCoordinateToGraphValue(pY + 1);
 
-            if (yResult <= 1.0f || (p > 1.0f && fabsf(yResult - p) / p > 0.20f)) { 
-                cacheMissing = true; 
-                return p; 
-            }
+            // Forex fix: 0.00001f zamiast 1.0f dla wsparcia par walutowych
+        if (yResult <= 0.00001f || (p > 0.00001f && fabsf(yResult - p) / p > 0.20f)) { 
+            cacheMissing = true; 
+            return p; 
+        }
             return yResult;
         };
 
@@ -539,10 +551,24 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
                 preview.pC = (AType == 1) ? sc.High[sC] : sc.Low[sC]; preview.idxC = sC;
                 RefreshExpansionStrings(sc, preview); DrawExpansionPreformatted(preview, 10000, 58, true, true);
             }
+        
+}
+
+      // Mechanizm GPU Safe-Lock: Wymuszamy redraw tylko gdy brak spływających danych (Offline)
+        // W SDK v2981 (2026) jedynym pewnym sposobem detekcji fazy ładowania historycznego
+        // jest sprawdzenie sc.IsFullRecalculation oraz sc.DownloadingHistoricalData.
+        if (cacheMissing) {
+            LastSize = -1;
+            if (sc.IsFullRecalculation != 0 || sc.DownloadingHistoricalData != 0) {
+                sc.FlagFullRecalculate = 1; 
+            }
         }
+        
+        if (StabCounter > 0) StabCounter--;
 
     } else {
         if (LastSize != -2) {
+
             for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
             for(int i = 0; i < 20; i++) for(int j = 0; j < 40; j++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, 30000 + (i * 40) + j);
             for (int i = 1; i <= 60; i++) for (int k = 0; k < sc.ArraySize; k++) sc.Subgraph[i][k] = 0;
