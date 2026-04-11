@@ -17,7 +17,7 @@ Custom studies for [Sierra Chart](https://www.sierrachart.com/) written in ACSIL
 | [Highlight Bar](Highlight%20Bar/) | Ten small studies that colour a bar on the price panel when it meets one condition: a new lower low, higher high, higher low or lower high, or a close in the top or bottom 25% or 50% of the bar range. Each has a Control Bar show/hide button. | V1 (`highlightbar-v1`) |
 | [HorizontalGrid](HorizontalGrid/) | Dotted horizontal price grid drawn with GDI; the step is chosen automatically and the Y-axis scale labels follow it (tuned for ES). | V10 (`horizontalgrid-v10`) |
 | [MACDPredictor](MACDPredictor/) | DiNapoli MACD Predictor with a Control Bar toggle. | V5 (`macdpredictor-v5`) |
-| [VerticalGrid](VerticalGrid/) | Dotted vertical time grid drawn with GDI; the line spacing follows the chart interval (daily, weekly, monthly, yearly), like TradeNavigator. | V8 (`verticalgrid-v8`) |
+| [VerticalGrid](VerticalGrid/) | Dotted vertical time grid drawn with GDI; the line spacing follows the chart interval (daily, weekly, monthly, yearly), like TradeNavigator. | V9 (`verticalgrid-v9`) |
 
 ## Other tools
 

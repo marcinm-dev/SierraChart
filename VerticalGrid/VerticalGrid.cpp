@@ -8,6 +8,9 @@ int GetWeekManual(int dateValue) { return dateValue / 7; }
 // Prototyp funkcji rysującej GDI
 void DrawVerticalGridGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc);
 
+// ZŁOTY ŚRODEK: Zasięg siatki w przyszłość (zastępuje wpisywanie 200/500/1000 w wielu miejscach)
+#define MAX_FORWARD_BARS 250
+
 /*==========================================================================*/
 SCSFExport scsf_VerticalGridTN(SCStudyInterfaceRef sc)
 {
@@ -19,7 +22,7 @@ SCSFExport scsf_VerticalGridTN(SCStudyInterfaceRef sc)
 
 	if (sc.SetDefaults)
 	{
-		sc.GraphName = "Vertical Grid TN (GDI FINAL)";
+		sc.GraphName = "Vertical Grid";
 		sc.StudyDescription = "Profesjonalna siatka GDI (V27 - Apex Performance).";
 
 		sc.AutoLoop = 0;           
@@ -32,6 +35,9 @@ SCSFExport scsf_VerticalGridTN(SCStudyInterfaceRef sc)
 		// Ukryty bufor mapy (Służy tylko do historii)
 		sc.Subgraph[0].Name = "Internal Grid Map";
 		sc.Subgraph[0].DrawStyle = DRAWSTYLE_IGNORE; 
+		sc.Subgraph[0].DisplayNameValueInWindowsFlags = 0;     // Ukrywa wartości w oknach danych
+		sc.Subgraph[0].IncludeInSpreadsheet = 0;               // Wyłącza z Excela
+		sc.Subgraph[0].DisplayNameValueInDataLine = 0;        // Ukrywa napis w lewym górnym rogu regionu
 
 		Input_GridColor.Name = "Grid Line Color";
 		Input_GridColor.SetColor(RGB(128, 128, 128)); 
@@ -47,34 +53,32 @@ SCSFExport scsf_VerticalGridTN(SCStudyInterfaceRef sc)
 		return;
 	}
 
-	// 1. GLOBALNY CACHE TYPU SIATKI (Optymalizacja Ad.1)
+	// 1. GLOBALNY CACHE I MAPOWANIE (Optymalizacja Etap 1: Throttling)
 	int& r_CachedGridType = sc.GetPersistentInt(20);
-	if (sc.ChartDataType == 2) { 
-		r_CachedGridType = (sc.SecondsPerBar < 3600) ? 1 : 2; 
-	} else { 
-		double DaysDiff = sc.BaseDateTimeIn[sc.ArraySize-1].GetAsDouble() - sc.BaseDateTimeIn[sc.ArraySize-2].GetAsDouble();
-		if (DaysDiff <= 4.0) r_CachedGridType = 3; else if (DaysDiff <= 32.0) r_CachedGridType = 4; else r_CachedGridType = 5; 
-	}
-
-	// 2. MAPOWANIE HISTORII I PRZYSZŁOŚCI (Unified Map)
 	int Spacing = Input_Spacing.GetInt();
-	
-	// Mapa przyszłości w PersistentPointer(2)
-	int* pFutureMap = (int*)sc.GetPersistentPointer(2);
-	if (pFutureMap == NULL) {
-		pFutureMap = new int[201];
-		sc.SetPersistentPointer(2, pFutureMap);
+	bool isNewBar = (sc.UpdateStartIndex >= sc.ArraySize - 1);
+
+	// Przeliczaj typ siatki tylko przy zmianie interwału lub pełnym odświeżeniu
+	if (sc.IsFullRecalculation || r_CachedGridType == 0) {
+		if (sc.ChartDataType == 2) { 
+			r_CachedGridType = (sc.SecondsPerBar < 3600) ? 1 : 2; 
+		} else { 
+			double DaysDiff = sc.BaseDateTimeIn[sc.ArraySize-1].GetAsDouble() - sc.BaseDateTimeIn[sc.ArraySize-2].GetAsDouble();
+			if (DaysDiff <= 4.0) r_CachedGridType = 3; else if (DaysDiff <= 32.0) r_CachedGridType = 4; else r_CachedGridType = 5; 
+		}
 	}
 
-	if (sc.UpdateStartIndex < sc.ArraySize) // Wykonuj tylko gdy dane się zmieniły
-	{
-		// Historia
+	// 2. MAPOWANIE HISTORII (Optymalizacja: Redundantne zerowanie)
+	if (sc.IsFullRecalculation) {
+		for (int i = 0; i < sc.ArraySize; i++) sc.Subgraph[0][i] = 0;
+	} else if (sc.ArraySize > 0) {
+		sc.Subgraph[0][sc.ArraySize - 1] = 0; 
+	}
+
+	if (sc.UpdateStartIndex < sc.ArraySize) {
 		for (int i = sc.UpdateStartIndex; i < sc.ArraySize; i++) {
-			sc.Subgraph[0][i] = 0;
 			if (i <= 0) continue;
 			SCDateTime cur = sc.BaseDateTimeIn[i]; SCDateTime pre = sc.BaseDateTimeIn[i-1];
-			if (cur == 0 || pre == 0) continue;
-
 			bool isNew = false;
 			if (r_CachedGridType == 1 && sc.GetTradingDayDate(cur) != sc.GetTradingDayDate(pre)) isNew = true;
 			else if (r_CachedGridType == 2 && GetWeekManual(sc.GetTradingDayDate(cur)) != GetWeekManual(sc.GetTradingDayDate(pre))) isNew = true;
@@ -84,13 +88,20 @@ SCSFExport scsf_VerticalGridTN(SCStudyInterfaceRef sc)
 
 			if (isNew && (i % Spacing == 0)) sc.Subgraph[0][i] = 1.0f;
 		}
+	}
 
-		// Przyszłość
-		for (int j = 0; j <= 200; j++) {
+	// 3. MAPOWANIE PRZYSZŁOŚCI (Dynamiczny zasięg oparty na MAX_FORWARD_BARS)
+	int* pFutureMap = (int*)sc.GetPersistentPointer(2);
+	if (pFutureMap == NULL) { 
+		pFutureMap = new int[MAX_FORWARD_BARS + 1]; 
+		sc.SetPersistentPointer(2, pFutureMap); 
+	}
+
+	if (sc.IsFullRecalculation || isNewBar) {
+		for (int j = 0; j <= MAX_FORWARD_BARS; j++) {
 			int idx = sc.ArraySize + j; pFutureMap[j] = 0;
 			SCDateTime fCur = sc.BaseDateTimeIn[idx]; SCDateTime fPre = sc.BaseDateTimeIn[idx-1];
 			if (fCur == 0 || fPre == 0) continue;
-
 			bool fNew = false;
 			if (r_CachedGridType == 1 && sc.GetTradingDayDate(fCur) != sc.GetTradingDayDate(fPre)) fNew = true;
 			else if (r_CachedGridType == 2 && GetWeekManual(sc.GetTradingDayDate(fCur)) != GetWeekManual(sc.GetTradingDayDate(fPre))) fNew = true;
@@ -101,34 +112,40 @@ SCSFExport scsf_VerticalGridTN(SCStudyInterfaceRef sc)
 			if (fNew && (idx % Spacing == 0)) pFutureMap[j] = 1;
 		}
 	}
-}
 
+	
+}
 void DrawVerticalGridGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc)
 {
 	if (sc.ArraySize < 2) return;
 
 	// Odczyt Cache (Ad.1 i Ad.2)
 	const int StartBar = sc.IndexOfFirstVisibleBar; 
-	const int EndBar   = sc.ArraySize + 200; 
+	const int EndBar   = sc.ArraySize + MAX_FORWARD_BARS;
+
 	const int Spacing  = sc.Input[1].GetInt();
 	const int JitterThreshold = sc.Input[4].GetInt();
 	const int* pFutureMap = (const int*)sc.GetPersistentPointer(2);
 
-	// JITTER CACHE (V24)
+	// JITTER CACHE (V24 - Optimized X-Recycling)
 	int& r_LStart = sc.GetPersistentInt(11); int& r_LEnd = sc.GetPersistentInt(12);
 	int& r_LRes = sc.GetPersistentInt(13); int& r_LThr = sc.GetPersistentInt(14);
 	if ((StartBar != r_LStart || EndBar != r_LEnd || JitterThreshold != r_LThr) && JitterThreshold > 0) {
 		int fX = -1; int sX = -1;
+		int x_prev_jitter = sc.BarIndexToXPixelCoordinate(StartBar - 1);
 		for (int i = StartBar; i < EndBar; i++) {
+			int x_curr_jitter = sc.BarIndexToXPixelCoordinate(i);
 			bool line = (i < sc.ArraySize) ? (sc.Subgraph[0][i] == 1.0f) : (pFutureMap && pFutureMap[i - sc.ArraySize] == 1);
 			if (line) {
-				int x = (sc.BarIndexToXPixelCoordinate(i) + sc.BarIndexToXPixelCoordinate(i-1)) / 2;
+				int x = (x_curr_jitter + x_prev_jitter) / 2;
 				if (fX == -1) fX = x; else { sX = x; break; }
 			}
+			x_prev_jitter = x_curr_jitter;
 		}
 		r_LRes = (fX != -1 && sX != -1 && abs(sX - fX) < JitterThreshold) ? 0 : 1;
 		r_LStart = StartBar; r_LEnd = EndBar; r_LThr = JitterThreshold;
 	} else if (JitterThreshold <= 0) r_LRes = 1;
+
 
 	if (r_LRes == 0) return;
 
@@ -153,14 +170,14 @@ void DrawVerticalGridGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc)
 	}
 	HGDIOBJ hOld = SelectObject(hDC, hP);
 
-	// -------------------------------------------------------------------
-	// 3. APEX LOOP (Ad.3: Polyline Engine)
+	
+// -------------------------------------------------------------------
+	// 3. APEX LOOP (Ad.3: Polyline Engine Optimized)
 	// -------------------------------------------------------------------
 	const int Dot = sc.Input[3].GetInt(); 
 	const int Gap = sc.Input[2].GetInt();
-	const int Segment = Dot + Gap;
+	const int Segment = Dot + Gap; // Optymalizacja kroku Y: Obliczamy raz
 	
-	// Przygotowanie tablicy punktów dla Polyline (Max segmentów: 1000)
 	POINT pts[1000];
 	int x_prev = sc.BarIndexToXPixelCoordinate(StartBar - 1);
 
@@ -173,21 +190,28 @@ void DrawVerticalGridGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc)
 			int x_mid = (x_curr + x_prev) / 2;
 			int ptCount = 0;
 			
+			// Pętla pionowa używa pre-kalkulowanego kroku Segment
 			for (int y = t; y < b && ptCount < 998; y += Segment) {
-				int s_e = y + Dot; if (s_e > b) s_e = b;
+				int s_e = y + Dot; 
+				if (s_e > b) s_e = b;
+				
 				pts[ptCount].x = x_mid; pts[ptCount].y = y;
 				pts[ptCount+1].x = x_mid; pts[ptCount+1].y = s_e;
 				ptCount += 2;
 			}
 			
-			// Rysowanie całej linii jednym wywołaniem (Ad.3)
-			for(int k=0; k < ptCount; k+=2) {
-				MoveToEx(hDC, pts[k].x, pts[k].y, NULL);
-				LineTo(hDC, pts[k+1].x, pts[k+1].y);
+			// Rysowanie całej linii jednym wywołaniem systemowym (PolyPolyline)
+			if (ptCount >= 2) {
+				DWORD polyCounts[500];
+				int numLines = ptCount / 2;
+				for (int c = 0; c < numLines; c++) polyCounts[c] = 2;
+				PolyPolyline(hDC, pts, polyCounts, numLines);
 			}
 		}
 		x_prev = x_curr;
 	}
+
+
 	
 	SelectClipRgn(hDC, NULL); SelectObject(hDC, hOld);
 }
