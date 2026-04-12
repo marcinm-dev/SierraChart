@@ -250,16 +250,25 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         sc.ReceivePointerEvents = ACS_RECEIVE_POINTER_EVENTS_WHEN_ACS_BUTTON_ENABLED;
         sc.ReceiveCharacterEvents = 1; 
 
+       
+// --- KONFIGURACJA HEARTBEAT (STEALTH) ---
         sc.Subgraph[0].Name = "Heartbeat";
         sc.Subgraph[0].DrawStyle = DRAWSTYLE_HIDDEN;
-        sc.Subgraph[0].DisplayNameValueInDataLine = 0; 
+        sc.Subgraph[0].DisplayNameValueInDataLine = 0;       // Ukrywa w nagłówku regionu
+        sc.Subgraph[0].DisplayNameValueInWindowsFlags = 0;    // Ukrywa w Chart Values Window
+        sc.Subgraph[0].IncludeInSpreadsheet = 0;              // Wyłącza z arkusza
 
+        // --- KONFIGURACJA RINGÓW 1-60 (STEALTH) ---
         for (int i = 1; i <= 60; i++) {
             sc.Subgraph[i].Name.Format("Ring %d", i);
             sc.Subgraph[i].DrawStyle = DRAWSTYLE_CIRCLE_HOLLOW; 
             sc.Subgraph[i].LineWidth = 5;               
             sc.Subgraph[i].PrimaryColor = RGB(65, 105, 225); 
-            sc.Subgraph[i].DisplayNameValueInDataLine = 0; 
+            
+            // Flagi czyszczące interfejs
+            sc.Subgraph[i].DisplayNameValueInDataLine = 0;    // Ukrywa w nagłówku regionu
+            sc.Subgraph[i].DisplayNameValueInWindowsFlags = 0; // Ukrywa w Chart Values Window
+            sc.Subgraph[i].IncludeInSpreadsheet = 0;           // Wyłącza z arkusza
         }
 
         sc.Input[0].Name = "Numer Przycisku Rysowania"; sc.Input[0].SetInt(2);
