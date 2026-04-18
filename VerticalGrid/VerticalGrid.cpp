@@ -22,7 +22,7 @@ SCSFExport scsf_VerticalGridTN(SCStudyInterfaceRef sc)
 
 	if (sc.SetDefaults)
 	{
-		sc.GraphName = "Vertical Grid";
+		sc.GraphName = "Vertical Grid GDI";
 		sc.StudyDescription = "Profesjonalna siatka GDI (V27 - Apex Performance).";
 
 		sc.AutoLoop = 0;           
@@ -113,7 +113,32 @@ SCSFExport scsf_VerticalGridTN(SCStudyInterfaceRef sc)
 		}
 	}
 
-	
+	// -------------------------------------------------------------------
+	// 4. SEKCJA SPRZĄTANIA (ZAPOBIEGANIE WYCIEKOM PAMIĘCI I GDI)
+	// -------------------------------------------------------------------
+	if (sc.LastCallToFunction) 
+	{
+		// Czyszczenie Mapy Przyszłości (Slot 2)
+		int* pFutureMap = (int*)sc.GetPersistentPointer(2);
+		if (pFutureMap != NULL) {
+			delete[] pFutureMap;
+			sc.SetPersistentPointer(2, NULL);
+		}
+
+		// Czyszczenie Pióra GDI (Slot 0)
+		HPEN hP = (HPEN)sc.GetPersistentPointer(0);
+		if (hP != NULL) {
+			DeleteObject(hP);
+			sc.SetPersistentPointer(0, NULL);
+		}
+
+		// Czyszczenie Regionu Clippingu (Slot 1)
+		HRGN hRgn = (HRGN)sc.GetPersistentPointer(1);
+		if (hRgn != NULL) {
+			DeleteObject(hRgn);
+			sc.SetPersistentPointer(1, NULL);
+		}
+	}
 }
 void DrawVerticalGridGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc)
 {
@@ -210,6 +235,7 @@ void DrawVerticalGridGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc)
 		}
 		x_prev = x_curr;
 	}
+
 
 
 	
