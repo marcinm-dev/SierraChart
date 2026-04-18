@@ -4,7 +4,8 @@ A Sierra Chart ACSIL study that draws a dotted horizontal price grid with GDI an
 
 ## Versions
 
-Versions are git tags: `horizontalgrid-v8`, `horizontalgrid-v9`.
+Versions are git tags: `horizontalgrid-v8`, `horizontalgrid-v9`, `horizontalgrid-v10`.
 
 - **V8**: First working version: dotted horizontal price grid drawn with GDI, step chosen from fixed Micro/Macro seeds with look-ahead upshift, Y-axis scale increment override.
 - **V9**: Performance optimisations: 1x10 dot pattern drawn by one ExtCreatePen line, GDI handle cleanup in LastCallToFunction, cached clip region, state gate that recomputes the step only when the visible range changes.
+- **V10**: Batch rendering: all grid lines drawn with one PolyPolyline call, stack buffer limited to 512 lines.

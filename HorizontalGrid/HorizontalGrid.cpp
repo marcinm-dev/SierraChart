@@ -215,21 +215,43 @@ r_hPen = ExtCreatePen(PS_GEOMETRIC | PS_USERSTYLE | PS_ENDCAP_FLAT, 1, &lb, 2, s
 // Kotwiczymy punkt startowy idealnie do ticka instrumentu
 	float StartPrice = sc.RoundToTickSize(floorf(VisibleLow / FinalStep) * FinalStep);
 
-	// --- START ZMIAN (PĘTLA ZOPTYMALIZOWANA) ---
-	for (float Price = StartPrice; Price <= VisibleHigh + FinalStep; Price += FinalStep)
+	
+
+// --- START ZMIAN (OPTYMALIZACJA BATCH: POLYPOLYLINE) ---
+	// Buforowanie punktów na stosie (ultra-fast allocation)
+	const int MAX_LINES = 512; 
+	POINT Points[MAX_LINES * 2];
+	DWORD Counts[MAX_LINES];
+	int LineCount = 0;
+
+	for (float Price = StartPrice; Price <= VisibleHigh + FinalStep && LineCount < MAX_LINES; Price += FinalStep)
 	{
-		// Wymuszenie zaokrąglenia ceny każdej linii przed konwersją na piksel (Fidelity ES)
+		// Zachowanie Tick-Fidelity ES
 		int y = sc.RegionValueToYPixelCoordinate(sc.RoundToTickSize(Price), sc.GraphRegion);
 		
 		if (y >= T_coord && y <= B_coord) 
 		{
-			// USUNIĘTO: Pętlę segmentową (for x < R_coord)
-			// TERAZ: Jedno wywołanie LineTo. System operacyjny sam nanosi wzór 1x10.
-			MoveToEx(hDC, L_coord, y, NULL);
-			LineTo(hDC, R_coord, y);
+			// Punkt początkowy linii
+			Points[LineCount * 2].x = L_coord;
+			Points[LineCount * 2].y = y;
+			// Punkt końcowy linii
+			Points[LineCount * 2 + 1].x = R_coord;
+			Points[LineCount * 2 + 1].y = y;
+			
+			Counts[LineCount] = 2; // Każda linia składa się z 2 punktów
+			LineCount++;
 		}
 	}
+
+	if (LineCount > 0)
+	{
+		// Jedno wywołanie API zamiast dziesiątek par MoveTo/LineTo
+		PolyPolyline(hDC, Points, Counts, LineCount);
+	}
 	// --- KONIEC ZMIAN ---
+
+
+
 
 	SelectObject(hDC, hOldPen);
 	SelectClipRgn(hDC, NULL);
