@@ -6,6 +6,7 @@ Custom studies for [Sierra Chart](https://www.sierrachart.com/) written in ACSIL
 
 | Study | What it does | Latest version |
 |---|---|---|
+| [ChangeInterval](ChangeInterval/) | Two Control Bar buttons, 20M and 3M, that change the chart interval to 20 or 3 minutes with one click, by sending the interval command to the chart window. | V1 (`changeinterval-v1`) |
 | [ChartInfo](ChartInfo/) | A single header line pinned to a corner of the chart: market date and time, range of the visible bars and a colored bar count. | V6 (`chartinfo-v6`) |
 | [D1BarReplay](D1BarReplay/) | Lets daily and higher-timeframe historical charts show the state of a trading day as of any moment of a Bar Replay. Works on chart data in memory only. | V1 (`d1barreplay-v1`) |
 | [DetrendedOscillator](DetrendedOscillator/) | DiNapoli Detrended Oscillator (close minus a 7-bar SMA) in its own pane with levels at 0 and +/-100. | V8 (`detrendedoscillator-v8`) |
