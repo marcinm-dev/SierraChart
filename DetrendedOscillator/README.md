@@ -4,7 +4,8 @@ A Sierra Chart ACSIL study: the DiNapoli Detrended Oscillator (close minus a 7-b
 
 ## Versions
 
-Versions are git tags: `detrendedoscillator-v1`, `detrendedoscillator-v2`.
+Versions are git tags: `detrendedoscillator-v1`, `detrendedoscillator-v2`, `detrendedoscillator-v4`.
 
 - **V1**: First working version: SMA(7) detrended oscillator with zero and +/-100 level lines.
 - **V2**: Level lines drawn across the whole region and SMA warm-up guard.
+- **V4**: Internal SMA array, persistent slots 120-122, Control Bar toggle with ghost mode, clean header, CPU and RAM guards, 20% region height.
