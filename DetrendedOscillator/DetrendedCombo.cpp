@@ -33,29 +33,29 @@ SCSFExport scsf_DiNapoliDetrendedOscillator(SCStudyInterfaceRef sc)
         Detrend.PrimaryColor = RGB(0, 0, 255); // Niebieski
         Detrend.LineWidth = 2;
 
-        // 2. Linia zerowa (przerywana, szara)
+
+// 2. Linia zerowa - Rysowana przez cały ekran + wymuszenie rysowania wartości 0
         ZeroLine.Name = "Zero Line";
-        ZeroLine.DrawStyle = DRAWSTYLE_LINE;
+        ZeroLine.DrawStyle = DRAWSTYLE_LINE_FROM_END_OF_CHART_LEFT_TO_RIGHT;
         ZeroLine.LineStyle = LINESTYLE_DASH;
         ZeroLine.PrimaryColor = RGB(128, 128, 128); 
         ZeroLine.LineWidth = 1;
-        
-        // MAGIA SIERRA CHART - Wymuszenie rysowania równych zer!
         ZeroLine.DrawZeros = true; 
 
         // 3. Górna linia pomarańczowa (Overbought)
         UpperBand.Name = "Upper Band";
-        UpperBand.DrawStyle = DRAWSTYLE_LINE;
-        UpperBand.PrimaryColor = RGB(255, 128, 0); // Pomarańczowy
+        UpperBand.DrawStyle = DRAWSTYLE_LINE_FROM_END_OF_CHART_LEFT_TO_RIGHT;
+        UpperBand.PrimaryColor = RGB(255, 128, 0); 
         UpperBand.LineWidth = 2;
-        UpperBand.DrawZeros = true;
+        UpperBand.DrawZeros = true; 
 
         // 4. Dolna linia pomarańczowa (Oversold)
         LowerBand.Name = "Lower Band";
-        LowerBand.DrawStyle = DRAWSTYLE_LINE;
-        LowerBand.PrimaryColor = RGB(255, 128, 0); // Pomarańczowy
+        LowerBand.DrawStyle = DRAWSTYLE_LINE_FROM_END_OF_CHART_LEFT_TO_RIGHT;
+        LowerBand.PrimaryColor = RGB(255, 128, 0); 
         LowerBand.LineWidth = 2;
         LowerBand.DrawZeros = true;
+
 
         // Ustawienie Read-Only dla SMA
         SMALength.Name = "SMA Length (LOCKED TO 7)";
@@ -79,14 +79,19 @@ SCSFExport scsf_DiNapoliDetrendedOscillator(SCStudyInterfaceRef sc)
         SMALength.SetInt(7);
     }
 
-    // Obliczanie prostej średniej kroczącej (SMA)
+// Obliczanie prostej średniej kroczącej (SMA)
     sc.SimpleMovAvg(sc.BaseDataIn[SC_LAST], SMA_Array, SMALength.GetInt());
 
-    // Obliczanie wartości Detrend
-    Detrend[sc.Index] = sc.BaseDataIn[SC_LAST][sc.Index] - SMA_Array[sc.Index];
+    // Mechanizm rozgrzewania (Seeding): Zaczynamy rysować dopiero od 7. bara (indeks 6)
+    // Dzięki temu unikamy "śmieci" na początku wykresu, tak jak w TradeNavigatorze.
+    if (sc.Index >= SMALength.GetInt() - 1)
+    {
+        Detrend[sc.Index] = sc.BaseDataIn[SC_LAST][sc.Index] - SMA_Array[sc.Index];
+    }
     
     // Rysowanie poziomych linii na stałych wartościach
+    // Zostawiamy je poza warunkiem, aby linie tła były widoczne na całej długości regionu.
     ZeroLine[sc.Index]  = ZeroLevel.GetFloat(); 
     UpperBand[sc.Index] = UpperLevel.GetFloat();
     LowerBand[sc.Index] = LowerLevel.GetFloat();
-}  
+}
