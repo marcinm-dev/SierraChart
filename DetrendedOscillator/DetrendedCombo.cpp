@@ -20,6 +20,7 @@ SCSFExport scsf_DetrendedOscillator(SCStudyInterfaceRef sc)
     SCInputRef LowerLevel = sc.Input[2];
 SCInputRef ZeroLevel  = sc.Input[3];
     SCInputRef BtnID      = sc.Input[4]; 
+	SCInputRef FixedHeight = sc.Input[5]; // Nowy parametr wysokości
 
 // --- FAZA 2: ARCHITEKTURA PAMIĘCI (IZOLACJA SLOTÓW 120-122) ---
     int& MasterState   = sc.GetPersistentInt(120); // Relokacja z 20 na 120
@@ -101,6 +102,9 @@ sc.GraphRegion = 1;
         // Konfiguracja domyślnego przycisku (Etap 1)
         BtnID.Name = "Control Bar Button ID (4)";
         BtnID.SetInt(4); 
+		
+		FixedHeight.Name = "Fixed Region Height %";
+        FixedHeight.SetInt(20);
 
 return;
     }
@@ -144,6 +148,9 @@ return;
 // --- FAZA 4: SILNIK OBLICZENIOWY STEROWANY PRZEZ MASTERSTATE ---
     if (MasterState == 1)
     {
+        // WYMUSZENIE WYSOKOŚCI: Działa w każdym ticku, blokując zmiany myszką
+        sc.SetGraphRegionHeightPercentage(sc.ChartNumber, sc.GraphRegion, FixedHeight.GetInt());
+
         // Obliczanie prostej średniej kroczącej (SMA)
         sc.SimpleMovAvg(sc.BaseDataIn[SC_LAST], SMA_Array, SMALength.GetInt());
 
