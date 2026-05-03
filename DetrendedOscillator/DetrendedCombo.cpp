@@ -5,12 +5,12 @@ SCDLLName("DetrendedCombo")
 
 /*
     ARCHITEKTURA PILOT-ROBOTNIK (V45)
-    Hider (Pilot): Detrended Oscillator Hider (Region 0)
+    Switch (Pilot): Detrended Oscillator Switch (Region 0)
     Engine (Worker): Detrended Oscillator Engine (Region 1)
 */
 
 // --- 1. DETRENDED OSCILLATOR ENGINE (ROBOTNIK) ---
-SCSFExport scsf_DDO_Engine(SCStudyInterfaceRef sc)
+SCSFExport scsf_DO_Engine(SCStudyInterfaceRef sc)
 {
     SCSubgraphRef Detrend   = sc.Subgraph[0];
     SCSubgraphRef ZeroLine  = sc.Subgraph[1];
@@ -33,15 +33,16 @@ SCSFExport scsf_DDO_Engine(SCStudyInterfaceRef sc)
 
 if (sc.SetDefaults)
     {
-        sc.GraphName = "Detrended Oscillator Engine";
-        sc.GraphShortName = "DDO_Engine"; 
-        sc.GraphRegion = 1; 
+sc.GraphName = "Detrended Oscillator Engine";
+        // ZMIANA V6.4: Usunięto ShortName dla czystości Study Summary
+        sc.GraphRegion = 1;
         sc.AutoLoop = 1;
         
         // --- PRZYWRÓCONE OPTYMALIZACJE (V48) ---
-        sc.UpdateAlways = 0; // CPU Guard: Aktualizacja tylko przy nowym ticku
-        sc.MaintainAdditionalChartDataArrays = 0; // RAM Guard: Brak zbędnych tablic danych
-        sc.DisplayStudyName = 0;           
+sc.UpdateAlways = 0; // CPU Guard: Aktualizacja tylko przy nowym ticku
+        // ZMIANA V6.1: Włączone dla stabilności SMA przy lukach danych (Gap Handling)
+        sc.MaintainAdditionalChartDataArrays = 1; 
+        sc.DisplayStudyName = 0;      
         sc.DisplayStudyInputValues = 0;    
         sc.ValueFormat = VALUEFORMAT_INHERITED; 
         sc.GlobalDisplayStudySubgraphsNameAndValue = 1;
@@ -110,11 +111,14 @@ if (sc.SetDefaults)
         double CurrentTime = sc.CurrentSystemDateTimeMS.GetAsDouble(); 
         double LastProcessTime = sc.GetPersistentDouble(125);
 
-        if ((CurrentTime - LastProcessTime) < TimeThreshold)
+// ZMIANA V6.1: Bypass dla zamknięcia świecy (Precyzja Bar Close)
+        bool BarClosed = sc.GetBarHasClosedStatus() == BHCS_BAR_HAS_CLOSED;
+
+        if ((CurrentTime - LastProcessTime) < TimeThreshold && !BarClosed)
             return;
 
-        sc.SetPersistentDouble(125, CurrentTime);
-    }
+sc.SetPersistentDouble(125, CurrentTime);
+    } // <--- DODANA BRAKUJĄCA KLAMRA DOMYKAJĄCA BLOK !sc.IsFullRecalculation
     // ----------------------------------------------------------------
 
     // Blokada silnika na SMA 7
@@ -134,8 +138,8 @@ if (sc.SetDefaults)
     LowerBand[sc.Index] = LowerLevel.GetFloat();
 }
 
-// --- 2. DETRENDED OSCILLATOR HIDER (PILOT) ---
-SCSFExport scsf_DDO_Hider(SCStudyInterfaceRef sc)
+// --- 2. DETRENDED OSCILLATOR Switch (PILOT) ---
+SCSFExport scsf_DO_Switch(SCStudyInterfaceRef sc)
 {
     // IZOLACJA INPUTÓW: Tylko sterowanie interfejsem
     SCInputRef BtnID = sc.Input[0];
@@ -147,9 +151,9 @@ SCSFExport scsf_DDO_Hider(SCStudyInterfaceRef sc)
 
 if (sc.SetDefaults)
     {
-        sc.GraphName = "Detrended Oscillator Hider";
-        sc.GraphShortName = "DDO_Hider"; 
-        sc.GraphRegion = 0; 
+sc.GraphName = "Detrended Oscillator Switch";
+        // ZMIANA V6.4: Usunięto ShortName dla czystości Study Summary
+        sc.GraphRegion = 0;
         sc.AutoLoop = 0;    
         
         // --- DODANE FLAGI DLA PILOTA (V48) ---
@@ -164,14 +168,15 @@ if (sc.SetDefaults)
     }
 
 // AUDYT STARTOWY I SYNCHRONIZACJA SESJI (V46 - Zabezpieczony)
-    if (Initialized == 0)
+if (Initialized == 0)
     {
-        // Szukamy wyłącznie silnika po jego unikalnym ShortName
-        int FoundID = sc.GetStudyIDByName(sc.ChartNumber, "DDO_Engine", 1);
+        // ZMIANA V6.4: Szukamy po Pełnej Nazwie (MatchShortName = 0)
+        int FoundID = sc.GetStudyIDByName(sc.ChartNumber, "Detrended Oscillator Engine", 0);
 
-        // BEZPIECZNIK: FoundID musi istnieć i NIE MOŻE być ID Hidera
+// BEZPIECZNIK: FoundID musi istnieć i NIE MOŻE być ID Switcha
         if (FoundID > 0 && FoundID != sc.StudyGraphInstanceID)
         {
+            // Dodatkowa weryfikacja nazwy, aby mieć 100% pewności przed synchronizacją
             MasterState = 1;
             WorkerInstanceID = FoundID;
         }
@@ -189,20 +194,24 @@ if (sc.SetDefaults)
     {
         MasterState = !MasterState;
 
-        if (MasterState == 1) // ON
+if (MasterState == 1) // ON
         {
-            int ExistingID = sc.GetStudyIDByName(sc.ChartNumber, "DDO_Engine", 1);
+            // ZMIANA V6.4: Wyszukiwanie po Pełnej Nazwie
+            int ExistingID = sc.GetStudyIDByName(sc.ChartNumber, "Detrended Oscillator Engine", 0);
             
-            if (ExistingID == 0)
+ // ZMIANA V6.6: Usunięcie zdublowanego warunku if (Precision Fix)
+            if (ExistingID == 0) 
             {
                 n_ACSIL::s_AddStudy AddStudy;
+ 
                 AddStudy.ChartNumber = sc.ChartNumber;
                 AddStudy.StudyID = 0; 
-                AddStudy.CustomStudyFileAndFunctionName = "DetrendedCombo.scsf_DDO_Engine"; 
-                AddStudy.ShortName = "DDO_Engine";
-
+                AddStudy.CustomStudyFileAndFunctionName = "DetrendedCombo.scsf_DO_Engine"; 
+                // ZMIANA V6.5: Usunięto AddStudy.ShortName, aby wskaźnik używał wyłącznie pełnej nazwy GraphName
+                
                 WorkerInstanceID = sc.AddStudyToChart(AddStudy);
             }
+
             else
             {
                 WorkerInstanceID = ExistingID;
@@ -211,25 +220,28 @@ if (sc.SetDefaults)
 
 else // OFF
         {
-            // Pilot szuka ID silnika, upewniając się, że nie celuje w samego siebie[cite: 2]
-            int TargetID = sc.GetStudyIDByName(sc.ChartNumber, "DDO_Engine", 1);
+            // ZMIANA V6.4: Wyszukiwanie po Pełnej Nazwie
+            int TargetID = sc.GetStudyIDByName(sc.ChartNumber, "Detrended Oscillator Engine", 0);
             
-            // BEZPIECZNIK: Usuwamy tylko jeśli znalezione ID nie należy do Hidera[cite: 2]
+            // BEZPIECZNIK: Usuwamy tylko jeśli ID jest poprawne i nie celuje w Pilota.
             if (TargetID > 0 && TargetID != sc.StudyGraphInstanceID)
             {
                 sc.RemoveStudyFromChart(sc.ChartNumber, TargetID);
-                WorkerInstanceID = 0;
+                WorkerInstanceID = 0; // Czyszczenie cache po usunięciu
             }
-            else if (WorkerInstanceID != 0 && WorkerInstanceID != sc.StudyGraphInstanceID)
+            else 
             {
-                // Jeśli GetStudyIDByName zawiodło, próbujemy użyć zapisanego WorkerInstanceID
-                sc.RemoveStudyFromChart(sc.ChartNumber, WorkerInstanceID);
-                WorkerInstanceID = 0;
+                // Jeśli nie znaleziono po nazwie, spróbuj użyć zapisanego ID jako fallback
+                if (WorkerInstanceID > 0 && WorkerInstanceID != sc.StudyGraphInstanceID)
+                {
+                    sc.RemoveStudyFromChart(sc.ChartNumber, WorkerInstanceID);
+                    WorkerInstanceID = 0;
+                }
             }
         }
     }
 
-    // Wizualna synchronizacja przycisku
+// Wizualna synchronizacja przycisku - ZMIANA V6.3: Stała nazwa przycisku "DETR OSC"
     sc.SetCustomStudyControlBarButtonEnable(BtnID.GetInt(), MasterState);
-    sc.SetCustomStudyControlBarButtonText(BtnID.GetInt(), (MasterState ? "DDO ON" : "DDO OFF"));
+    sc.SetCustomStudyControlBarButtonText(BtnID.GetInt(), "DETR OSC");
 }
