@@ -8,8 +8,10 @@ SCDLLName("DiNapoliExpansion")
 const int GLOBAL_SYNC_SLOT = 9999;           
 
 // 1. BEZPIECZEŃSTWO BINARNE: Upakowanie struktur (Etap 1 GDI)
+// --- 1. BEZPIECZEŃSTWO BINARNE: Upakowanie struktur ---
 #pragma pack(push, 1)
 struct SavedExpansion {
+    char sPrefix[32]; // NOWOŚĆ: Przechowuje tekst przedrostka (Etap 1)
     float pA, pB, pC;
     SCDateTime tA, tB, tC;
     int aType;
@@ -23,7 +25,7 @@ struct SavedExpansion {
     bool isVisibleOnCurrentTF;
     int dwA, dwB, dwC;
     int dwCOP, dwOP, dwXOP;
-    int reserved; // Rezerwowe miejsce pod przyszłe parametry
+    int reserved; 
 };
 
 struct DiNapoliData {
@@ -33,7 +35,6 @@ struct DiNapoliData {
 #pragma pack(pop)
 
 
-// --- FUNKCJA ODŚWIEŻAJĄCA TEKSTY I GEOMETRIĘ (HOISTED) ---
 void RefreshExpansionStrings(SCStudyInterfaceRef sc, SavedExpansion& exp) {
     if (exp.pA <= 0) return;
     
@@ -43,10 +44,12 @@ void RefreshExpansionStrings(SCStudyInterfaceRef sc, SavedExpansion& exp) {
     exp.vXOP = sc.RoundToTickSize(exp.pC + (wave * 1.618f));
 
     SCString t, tPrice;
+    
+    // PUNKTY A, B, C: Pozostają czyste (np. "A 6540.25")
     tPrice = sc.FormatGraphValue(exp.pA, sc.BaseGraphValueFormat);
     t.Format("A %s", tPrice.GetChars());
     strncpy(exp.sA, t.GetChars(), 31); exp.sA[31] = '\0';
-    exp.dwA = (tPrice.GetLength() / 2) + 2; // Przywrócono Standard + 2
+    exp.dwA = (tPrice.GetLength() / 2) + 2; 
 
     tPrice = sc.FormatGraphValue(exp.pB, sc.BaseGraphValueFormat);
     t.Format("B %s", tPrice.GetChars());
@@ -58,24 +61,24 @@ void RefreshExpansionStrings(SCStudyInterfaceRef sc, SavedExpansion& exp) {
     strncpy(exp.sC, t.GetChars(), 31); exp.sC[31] = '\0';
     exp.dwC = (tPrice.GetLength() / 2) + 2;
 
+    // POZIOMY EXPANSION: Przygotowanie buforów ceny dla COP, OP, XOP
     SCString sTemp;
     sTemp = sc.FormatGraphValue(exp.vCOP, sc.BaseGraphValueFormat);
-    strncpy(exp.sCOP, sTemp.GetChars(), 31);
-    exp.sCOP[31] = '\0';
+    strncpy(exp.sCOP, sTemp.GetChars(), 31); exp.sCOP[31] = '\0';
     exp.dwCOP = (sTemp.GetLength() / 2) + 1;
 
     sTemp = sc.FormatGraphValue(exp.vOP, sc.BaseGraphValueFormat);
-    strncpy(exp.sOP,  sTemp.GetChars(), 31);
-    exp.sOP[31] = '\0';
+    strncpy(exp.sOP,  sTemp.GetChars(), 31); exp.sOP[31] = '\0';
     exp.dwOP = (sTemp.GetLength() / 2) + 1;
 
     sTemp = sc.FormatGraphValue(exp.vXOP, sc.BaseGraphValueFormat);
-    strncpy(exp.sXOP, sTemp.GetChars(), 31);
-    exp.sXOP[31] = '\0';
+    strncpy(exp.sXOP, sTemp.GetChars(), 31); exp.sXOP[31] = '\0';
     exp.dwXOP = (sTemp.GetLength() / 2) + 1;
 
     exp.isVisibleOnCurrentTF = (abs(exp.idxC - exp.idxA) >= sc.Input[12].GetInt());
 }
+
+
 
 // --- DYNAMICZNE WYSZUKIWANIE ID MENU ---
 int FindSierraMenuCommandID(HWND hRoot, const char* menuName, const char* itemName) {
@@ -140,11 +143,85 @@ void SaveDiNapoliData(SCStudyInterfaceRef sc, DiNapoliData* pData) {
     if (outFile.is_open()) { outFile.write((char*)pData, sizeof(DiNapoliData)); outFile.close(); }
 }
 
+
 void LoadDiNapoliData(SCStudyInterfaceRef sc, DiNapoliData* pData) {
     SCString filePath;
     filePath.Format("%sDN_Exp_C%d_S%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
     std::ifstream inFile(filePath.GetChars(), std::ios::binary);
     if (inFile.is_open()) { inFile.read((char*)pData, sizeof(DiNapoliData)); inFile.close(); }
+}
+
+// --- ETAP 2: INFRASTRUKTURA UI WIN32 (Custom Tagging) ---
+
+// Procedura obsługi okna (DlgProc) - kluczowa dla stabilności 64-bit
+INT_PTR CALLBACK PrefixDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+    case WM_INITDIALOG:
+        // Bezpieczne zaparkowanie wskaźnika w UserData okna (Standard 2026)
+        SetWindowLongPtr(hDlg, GWLP_USERDATA, (LONG_PTR)lParam);
+        SetDlgItemTextA(hDlg, 101, (char*)lParam);
+        SetFocus(GetDlgItem(hDlg, 101));
+        return (INT_PTR)FALSE; 
+
+    case WM_COMMAND:
+        if (LOWORD(wParam) == IDOK) {
+            char* pBuf = (char*)GetWindowLongPtr(hDlg, GWLP_USERDATA);
+            if (pBuf) {
+                GetDlgItemTextA(hDlg, 101, pBuf, 30); 
+                int len = (int)strlen(pBuf);
+                // Logika automatycznej spacji (Filar Estetyki)
+                if (len > 0 && len < 30 && pBuf[len-1] != ' ') {
+                    pBuf[len] = ' ';
+                    pBuf[len+1] = '\0';
+                }
+            }
+            EndDialog(hDlg, IDOK);
+            return (INT_PTR)TRUE;
+        }
+        if (LOWORD(wParam) == IDCANCEL) {
+            EndDialog(hDlg, IDCANCEL);
+            return (INT_PTR)TRUE;
+        }
+        break;
+    }
+    return (INT_PTR)FALSE;
+}
+
+// Funkcja budująca okno w RAM (Resource-less)
+void ShowPrefixDialog(HWND hParent, char* prefixBuffer) {
+    unsigned char dlgTemp[1024]; 
+    memset(dlgTemp, 0, sizeof(dlgTemp));
+    LPDLGTEMPLATE lpdt = (LPDLGTEMPLATE)dlgTemp;
+
+    lpdt->style = DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_SETFONT;
+    lpdt->cdit = 3; // Kontrolki: Label, Edit, Button
+    lpdt->x = 100; lpdt->y = 100; lpdt->cx = 160; lpdt->cy = 60;
+
+    unsigned short* p = (unsigned short*)(lpdt + 1);
+    *p++ = 0; *p++ = 0; // Menu i Klasa
+
+    const wchar_t* title = L"Custom Tagging (ABC)";
+    while (*title) *p++ = (unsigned short)*title++; *p++ = 0;
+    *p++ = 8; // Rozmiar czcionki
+    const wchar_t* font = L"MS Sans Serif";
+    while (*font) *p++ = (unsigned short)*font++; *p++ = 0;
+
+    auto AddCtrl = [&](unsigned short type, const wchar_t* txt, short id, short x, short y, short cx, short cy, DWORD style) {
+        p = (unsigned short*)(((DWORD_PTR)p + 3) & ~3); // Alignment do 4 bajtów
+        LPDLGITEMTEMPLATE lpit = (LPDLGITEMTEMPLATE)p;
+        lpit->style = style | WS_CHILD | WS_VISIBLE;
+        lpit->x = x; lpit->y = y; lpit->cx = cx; lpit->cy = cy; lpit->id = id;
+        p = (unsigned short*)(lpit + 1);
+        *p++ = 0xFFFF; *p++ = type;
+        while (*txt) *p++ = (unsigned short)*txt++; *p++ = 0;
+        *p++ = 0; // Extra data
+    };
+
+    AddCtrl(0x0082, L"Wprowadź przedrostek:", 100, 7, 7, 140, 10, SS_LEFT);
+    AddCtrl(0x0081, L"", 101, 7, 20, 146, 14, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP);
+    AddCtrl(0x0080, L"Zatwierdź", IDOK, 53, 40, 50, 14, BS_DEFPUSHBUTTON | WS_TABSTOP);
+
+    DialogBoxIndirectParamA(NULL, (LPDLGTEMPLATE)dlgTemp, hParent, PrefixDlgProc, (LPARAM)prefixBuffer);
 }
 
 
@@ -250,26 +327,33 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         sc.ReceivePointerEvents = ACS_RECEIVE_POINTER_EVENTS_WHEN_ACS_BUTTON_ENABLED;
         sc.ReceiveCharacterEvents = 1; 
 
-       
-// --- KONFIGURACJA HEARTBEAT (STEALTH) ---
-        sc.Subgraph[0].Name = "Heartbeat";
-        sc.Subgraph[0].DrawStyle = DRAWSTYLE_HIDDEN;
-        sc.Subgraph[0].DisplayNameValueInDataLine = 0;       // Ukrywa w nagłówku regionu
-        sc.Subgraph[0].DisplayNameValueInWindowsFlags = 0;    // Ukrywa w Chart Values Window
-        sc.Subgraph[0].IncludeInSpreadsheet = 0;              // Wyłącza z arkusza
-
-        // --- KONFIGURACJA RINGÓW 1-60 (STEALTH) ---
-        for (int i = 1; i <= 60; i++) {
-            sc.Subgraph[i].Name.Format("Ring %d", i);
-            sc.Subgraph[i].DrawStyle = DRAWSTYLE_CIRCLE_HOLLOW; 
-            sc.Subgraph[i].LineWidth = 5;               
-            sc.Subgraph[i].PrimaryColor = RGB(65, 105, 225); 
+ // --- 1. GLOBALNE UKRYWANIE ETYKIET (STEALTH MODE) ---
+        sc.DisplayStudyName = 0;                             // Ukrywa nazwę "DiNapoli Expansion"
+        sc.DisplayStudyInputValues = 0;                      // Ukrywa parametry w nagłówku (np. 2, 20, 1)
+        sc.GlobalDisplayStudySubgraphsNameAndValue = 0;      // Całkowite wyciszenie wartości w nagłówku
+        
+        // --- 2. KONFIGURACJA SUBGRAFÓW (RINGI 0-60) ---
+        // Pętla obejmuje Heartbeat (0) oraz Ringi (1-60)
+        for (int i = 0; i <= 60; i++) {
+            if (i == 0) {
+                sc.Subgraph[i].Name = "Heartbeat";
+                sc.Subgraph[i].DrawStyle = DRAWSTYLE_HIDDEN;
+            } else {
+                sc.Subgraph[i].Name.Format("Ring %d", i);
+                sc.Subgraph[i].DrawStyle = DRAWSTYLE_CIRCLE_HOLLOW; 
+                sc.Subgraph[i].LineWidth = 5;               
+                sc.Subgraph[i].PrimaryColor = RGB(65, 105, 225);
+            }
             
-            // Flagi czyszczące interfejs
-            sc.Subgraph[i].DisplayNameValueInDataLine = 0;    // Ukrywa w nagłówku regionu
-            sc.Subgraph[i].DisplayNameValueInWindowsFlags = 0; // Ukrywa w Chart Values Window
-            sc.Subgraph[i].IncludeInSpreadsheet = 0;           // Wyłącza z arkusza
-        }
+            // Kompletny pakiet ukrywania dla każdego subgrafu
+            sc.Subgraph[i].DisplayNameValueInDataLine = 0;       // Region Data Line
+            sc.Subgraph[i].DisplayNameValueInWindowsFlags = 0;    // Chart Values Window
+            sc.Subgraph[i].IncludeInSpreadsheet = 0;              // Spreadsheet Guard
+            sc.Subgraph[i].IncludeInStudySummary = 0;             // Study Summary
+            sc.Subgraph[i].LineLabel = 0;                         // Name/Value Label na prawej osi
+        }      
+
+
 
         sc.Input[0].Name = "Numer Przycisku Rysowania"; sc.Input[0].SetInt(2);
         sc.Input[1].Name = "Kolor 0.618"; sc.Input[1].SetColor(RGB(0, 0, 255));
@@ -412,29 +496,23 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
 
 
 if (!sc.DownloadingHistoricalData) {
+        // 1. Aktywacja przycisku i wymuszenie kursora (Pointer Proxy)
         if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == DrawBtn) 
         { 
             TState = 1; 
-
-            // WYMUSZONY POINTER PRZEZ WINAPI + CACHING (SLOT 45)
             HWND hRoot = ::GetAncestor((HWND)sc.ChartWindowHandle, GA_ROOT);
-            if (hRoot != NULL)
-            {
+            if (hRoot != NULL) {
                 int& CachedPointerID = sc.GetPersistentInt(45); 
-
-                // Skanowanie menu Tools -> Pointer tylko raz na sesję
-                if (CachedPointerID <= 0) {
-                    CachedPointerID = FindSierraMenuCommandID(hRoot, "Tools", "Pointer");
-                }
-                
-                // Wysłanie priorytetowego komunikatu do jądra Windows
-                if (CachedPointerID > 0) {
-                    ::PostMessageA(hRoot, WM_COMMAND, CachedPointerID, 0);
-                }
+                if (CachedPointerID <= 0) CachedPointerID = FindSierraMenuCommandID(hRoot, "Tools", "Pointer");
+                if (CachedPointerID > 0) ::PostMessageA(hRoot, WM_COMMAND, CachedPointerID, 0);
             }
         }
-        int cIdx = sc.ActiveToolIndex; float mY = (float)sc.ActiveToolYValue;
-        if (sc.PointerEventType == SC_POINTER_BUTTON_DOWN && TState > 0) {
+
+        int cIdx = sc.ActiveToolIndex; 
+        float mY = (float)sc.ActiveToolYValue;
+
+// 2. Maszyna Stanów (Złoty Standard UP-Based - Filar Stabilności)
+        if (sc.PointerEventType == SC_POINTER_BUTTON_UP && TState > 0) {
             if (TState == 1) {
                 bool isAHigh = (fabs(mY - sc.High[cIdx]) < fabs(mY - sc.Low[cIdx]));
                 sc.GetPersistentFloat(10) = isAHigh ? sc.High[cIdx] : sc.Low[cIdx];
@@ -442,27 +520,43 @@ if (!sc.DownloadingHistoricalData) {
                 sc.GetPersistentInt(20) = cIdx; AType = isAHigh ? 1 : 2; TState = 2;
             }
             else if (TState == 2) {
-                bool findHigh = (AType == 2); int sIdx = GetSnappedIndex(sc, cIdx, snapRange, findHigh);
+                bool findHigh = (AType == 2); 
+                int sIdx = GetSnappedIndex(sc, cIdx, snapRange, findHigh);
                 sc.GetPersistentFloat(11) = findHigh ? sc.High[sIdx] : sc.Low[sIdx];
                 sc.GetPersistentSCDateTime(11) = sc.BaseDateTimeIn[sIdx];
                 sc.GetPersistentInt(21) = sIdx; TState = 3;
             }
             else if (TState == 3) {
-                bool findHigh = (AType == 1); int sIdx = GetSnappedIndex(sc, cIdx, snapRange, findHigh);
+                bool findHigh = (AType == 1); 
+                int sIdx = GetSnappedIndex(sc, cIdx, snapRange, findHigh);
                 int s = pData->numSaved % sc.Input[5].GetInt();
-                pData->expansions[s].pA = sc.GetPersistentFloat(10); pData->expansions[s].tA = sc.GetPersistentSCDateTime(10);
-                pData->expansions[s].idxA = sc.GetPersistentInt(20); pData->expansions[s].pB = sc.GetPersistentFloat(11);
-                pData->expansions[s].tB = sc.GetPersistentSCDateTime(11); pData->expansions[s].idxB = sc.GetPersistentInt(21);
+
+                pData->expansions[s].pA = sc.GetPersistentFloat(10); 
+                pData->expansions[s].tA = sc.GetPersistentSCDateTime(10);
+                pData->expansions[s].idxA = sc.GetPersistentInt(20);
+                pData->expansions[s].pB = sc.GetPersistentFloat(11); 
+                pData->expansions[s].tB = sc.GetPersistentSCDateTime(11);
+                pData->expansions[s].idxB = sc.GetPersistentInt(21);
                 pData->expansions[s].pC = findHigh ? sc.High[sIdx] : sc.Low[sIdx];
                 pData->expansions[s].tC = sc.BaseDateTimeIn[sIdx]; pData->expansions[s].idxC = sIdx;
-                pData->expansions[s].aType = AType; 
+                pData->expansions[s].aType = AType;
+
+                // TRIGGER: Wywołanie okna po puszczeniu myszki (UP)
+                HWND hRoot = ::GetAncestor((HWND)sc.ChartWindowHandle, GA_ROOT);
+                ShowPrefixDialog(hRoot, pData->expansions[s].sPrefix);
+
                 RefreshExpansionStrings(sc, pData->expansions[s]);
                 for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
-                pData->numSaved++; SaveDiNapoliData(sc, pData); TState = 0; sc.SetCustomStudyControlBarButtonEnable(DrawBtn, 0); LastSize = -1;
+
+                pData->numSaved++; SaveDiNapoliData(sc, pData); 
+                TState = 0; sc.SetCustomStudyControlBarButtonEnable(DrawBtn, 0); LastSize = -1; 
             }
-            sc.PointerEventType = 0; 
+            sc.PointerEventType = 0;
         }
+
+
     }
+
 
 // --- 7. REDRAW GATE (GPU Safe-Lock) ---
     int& StabCounter = sc.GetPersistentInt(31); 
@@ -490,119 +584,143 @@ if (!sc.DownloadingHistoricalData) {
         for (int i = 58; i <= 60; i++) for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) sc.Subgraph[i][k] = 0;
     }
 
-    // --- 8. RENDERER (LIVE PIXELS & HOISTED STRINGS) ---
+
+// --- 8. RENDERER (LIVE PIXELS & HOISTED STRINGS) ---
     auto DrawExpansionPreformatted = [&](const SavedExpansion& exp, int idS, int subStart, bool drawLevels, bool isPreview) {
         if (exp.pA <= 0 || exp.idxA < 0) return;
         if (!isPreview && !exp.isVisibleOnCurrentTF) return;
 
-        int rBound = exp.idxC + 15; if (rBound < sc.IndexOfFirstVisibleBar) return;
+        int rBound = exp.idxC + 15; 
+        if (rBound < sc.IndexOfFirstVisibleBar) return;
 
         auto GetYAdj = [&](float p, bool isHigh) -> float {
             if (!isHigh) return p;
             int pY = sc.RegionValueToYPixelCoordinate(p, sc.GraphRegion);
             if (pY == 0) { cacheMissing = true; return p; } 
-
             float yResult = (float)sc.YPixelCoordinateToGraphValue(pY + 1);
-
-            // Forex fix: 0.00001f zamiast 1.0f dla wsparcia par walutowych
-        if (yResult <= 0.00001f || (p > 0.00001f && fabsf(yResult - p) / p > 0.20f)) { 
-            cacheMissing = true; 
-            return p; 
-        }
+            if (yResult <= 0.00001f || (p > 0.00001f && fabsf(yResult - p) / p > 0.20f)) { 
+                cacheMissing = true; return p; 
+            }
             return yResult;
         };
 
-        auto AnchorPoint = [&](float p, bool isHigh, int idx, const char* label, int id, int subIdx, int dw) {
+        auto AnchorPoint = [&](float p, bool isHigh, int idx, const char* label, int id, int subIdx) {
             float yLive = GetYAdj(p, isHigh);
             if (IsVisible && idx >= 0 && idx < sc.ArraySize) {
-                sc.Subgraph[subIdx].PrimaryColor = sc.Input[4].GetColor(); sc.Subgraph[subIdx][idx] = yLive; 
+                sc.Subgraph[subIdx].PrimaryColor = sc.Input[4].GetColor(); 
+                sc.Subgraph[subIdx][idx] = yLive; 
             }
-            // Etap 3: Linia systemowa usunięta. Teraz rysuje ją silnik GDI z precyzyjnym offsetem 5px.
-            // Pozostawiamy tylko etykietę tekstową (Cena + Nazwa).
+            
+            // Czystość kotwic: Usuwamy rysunek przedrostka na tym ID (id + 3)
+            sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id + 3);
+
             pTool->Clear(); pTool->AddMethod = UTAM_ADD_OR_ADJUST; pTool->DrawingType = DRAWING_TEXT;
             pTool->AddAsUserDrawnDrawing = 0; pTool->BeginIndex = idx + 1; pTool->BeginValue = p; pTool->Color = RGB(0, 0, 0);
             pTool->FontFace = "Arial"; pTool->FontSize = 8; pTool->FontBold = 1; pTool->Text = label;
             pTool->TextAlignment = DT_LEFT | DT_TOP; pTool->LineNumber = id + 2; sc.UseTool(*pTool);
         };
 
-        AnchorPoint(exp.pA, (exp.aType==1), exp.idxA, exp.sA, idS, subStart, exp.dwA);
-        AnchorPoint(exp.pB, (exp.aType!=1), exp.idxB, exp.sB, idS + 3, subStart + 1, exp.dwB);
-        AnchorPoint(exp.pC, (exp.aType==1), exp.idxC, exp.sC, idS + 6, subStart + 2, exp.dwC);
+        // Złoty Standard ID (odstęp 5) dla punktów A, B, C
+        AnchorPoint(exp.pA, (exp.aType==1), exp.idxA, exp.sA, idS, subStart);
+        AnchorPoint(exp.pB, (exp.aType!=1), exp.idxB, exp.sB, idS + 5, subStart + 1);
+        AnchorPoint(exp.pC, (exp.aType==1), exp.idxC, exp.sC, idS + 10, subStart + 2);
 
         if (!drawLevels) return;
         int sX = exp.idxC + 1;
-        auto L = [&](float p, float v, COLORREF c, const char* vS, const char* rL, int id, int dw) {
+
+auto L = [&](float p, float v, COLORREF c, const char* vS, const char* rL, int id, int dw) {
             float yLive = GetYAdj(v, true); 
-            int eX = sX + dw; int tX = (sX + eX) / 2;
+            int eX = sX + dw; 
+            int tX = (sX + eX) / 2;
+            
+            // 1. LINIA POZIOMU
             pTool->Clear(); pTool->AddMethod = UTAM_ADD_OR_ADJUST; pTool->DrawingType = DRAWING_LINE;
             pTool->AddAsUserDrawnDrawing = 0; pTool->BeginIndex = sX; pTool->EndIndex = eX; pTool->BeginValue = p; pTool->EndValue = p;
             pTool->Color = c; pTool->LineWidth = 1; pTool->LineNumber = id; sc.UseTool(*pTool);
+
+            // 2. RATIO LABEL (np. 0.618) - POD LINIĄ (DT_TOP na yLive)
             pTool->Clear(); pTool->AddMethod = UTAM_ADD_OR_ADJUST; pTool->DrawingType = DRAWING_TEXT;
-            pTool->AddAsUserDrawnDrawing = 0; pTool->BeginIndex = tX; pTool->BeginValue = p; pTool->Color = c; pTool->FontSize = 8; pTool->FontBold = 1;
-            pTool->FontFace = "Arial"; pTool->Text = vS; pTool->TextAlignment = DT_CENTER | DT_BOTTOM; pTool->LineNumber = id+1; sc.UseTool(*pTool);
-            pTool->Text = rL; pTool->BeginValue = yLive; pTool->TextAlignment = DT_CENTER | DT_TOP; pTool->LineNumber = id+2; sc.UseTool(*pTool);
+            pTool->AddAsUserDrawnDrawing = 0; pTool->BeginIndex = tX; pTool->BeginValue = yLive; pTool->Color = c; pTool->FontSize = 8; pTool->FontBold = 1;
+            pTool->FontFace = "Arial"; pTool->Text = rL; pTool->TextAlignment = DT_CENTER | DT_TOP; pTool->LineNumber = id + 2; sc.UseTool(*pTool);
+
+            // 3. SPLIT ALIGNMENT: PRZEDROSTEK (Osobny byt - DT_RIGHT | DT_BOTTOM)
+            if (exp.sPrefix[0] != '\0') {
+                pTool->Clear(); pTool->AddMethod = UTAM_ADD_OR_ADJUST; pTool->DrawingType = DRAWING_TEXT;
+                pTool->AddAsUserDrawnDrawing = 0; pTool->BeginIndex = sX; pTool->BeginValue = p; pTool->Color = c; 
+                pTool->FontSize = 8; pTool->FontBold = 1; pTool->FontFace = "Arial";
+                pTool->Text = exp.sPrefix; pTool->TextAlignment = DT_RIGHT | DT_BOTTOM; pTool->LineNumber = id + 3; sc.UseTool(*pTool);
+            } else { sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id + 3); }
+
+            // 4. SPLIT ALIGNMENT: CENA (Osobny byt - DT_LEFT | DT_BOTTOM)
+            pTool->Clear(); pTool->AddMethod = UTAM_ADD_OR_ADJUST; pTool->DrawingType = DRAWING_TEXT;
+            pTool->AddAsUserDrawnDrawing = 0; pTool->BeginIndex = sX; pTool->BeginValue = p; pTool->Color = c; 
+            pTool->FontSize = 8; pTool->FontBold = 1; pTool->FontFace = "Arial";
+            pTool->Text = vS; pTool->TextAlignment = DT_LEFT | DT_BOTTOM; pTool->LineNumber = id + 1; sc.UseTool(*pTool);
         };
-        L(exp.vCOP, exp.vCOP, sc.Input[1].GetColor(), exp.sCOP, "0.618", idS+10, exp.dwCOP);
-        L(exp.vOP,  exp.vOP,  sc.Input[2].GetColor(), exp.sOP,  "1.000", idS+13, exp.dwOP);
-        L(exp.vXOP, exp.vXOP, sc.Input[3].GetColor(), exp.sXOP, "1.618", idS+16, exp.dwXOP);
-    };
+
+
+
+        
+        // Złoty Standard ID (odstęp 5): COP (+15), OP (+20), XOP (+25)
+        L(exp.vCOP, exp.vCOP, sc.Input[1].GetColor(), exp.sCOP, "0.618", idS+15, exp.dwCOP);
+        L(exp.vOP,  exp.vOP,  sc.Input[2].GetColor(), exp.sOP,  "1.000", idS+20, exp.dwOP);
+        L(exp.vXOP, exp.vXOP, sc.Input[3].GetColor(), exp.sXOP, "1.618", idS+25, exp.dwXOP);
+    }; // KONIEC LAMBDY
 
     if (IsVisible) {
         if (needsRedraw && sc.ArraySize > 0) {
-            int maxR = sc.Input[5].GetInt(); int limit = min(pData->numSaved, maxR);
-            for (int i = 0; i < limit; i++) DrawExpansionPreformatted(pData->expansions[i], 30000 + (i * 40), 1 + (i * 3), true, false);
-            LastSize = sc.ArraySize; LastLeftIdx = sc.IndexOfFirstVisibleBar;
+            int maxR = sc.Input[5].GetInt(); 
+            int limit = min(pData->numSaved, maxR);
+            for (int i = 0; i < limit; i++) {
+                DrawExpansionPreformatted(pData->expansions[i], 30000 + (i * 40), 1 + (i * 3), true, false);
+            }
+            LastSize = sc.ArraySize; 
+            LastLeftIdx = sc.IndexOfFirstVisibleBar;
             if (cacheMissing) LastSize = -1; 
         }
-     if (TState >= 1) {
-            SavedExpansion preview; memset(&preview, 0, sizeof(SavedExpansion));
+
+        if (TState >= 1) {
+            SavedExpansion preview; 
+            memset(&preview, 0, sizeof(SavedExpansion));
             
-            // Logika Ducha Punktu A (TState 1)
             if (TState == 1) {
                 float mY = (float)sc.ActiveToolYValue;
                 bool isH = (fabs(mY - sc.High[sc.ActiveToolIndex]) < fabs(mY - sc.Low[sc.ActiveToolIndex]));
                 preview.pA = isH ? (float)sc.High[sc.ActiveToolIndex] : (float)sc.Low[sc.ActiveToolIndex];
-                preview.idxA = sc.ActiveToolIndex;
-                preview.idxC = preview.idxA; // Bumper dla Clippingu renderera
-                preview.aType = isH ? 1 : 2;
+                preview.idxA = sc.ActiveToolIndex; preview.idxC = preview.idxA; preview.aType = isH ? 1 : 2;
                 RefreshExpansionStrings(sc, preview); 
                 DrawExpansionPreformatted(preview, 10000, 58, false, true);
             }
             else if (TState == 2) {
                 preview.pA = sc.GetPersistentFloat(10); preview.idxA = sc.GetPersistentInt(20); preview.aType = AType;
                 int sB = GetSnappedIndex(sc, sc.ActiveToolIndex, snapRange, (AType == 2));
-                preview.pB = (AType == 2) ? sc.High[sB] : sc.Low[sB]; preview.idxB = sB; preview.pC = preview.pB; preview.idxC = sB;
-                RefreshExpansionStrings(sc, preview); DrawExpansionPreformatted(preview, 10000, 58, false, true); 
+                preview.pB = (AType == 2) ? sc.High[sB] : sc.Low[sB]; 
+                preview.idxB = sB; preview.pC = preview.pB; preview.idxC = sB;
+                RefreshExpansionStrings(sc, preview); 
+                DrawExpansionPreformatted(preview, 10000, 58, false, true); 
             } 
             else if (TState == 3) {
                 preview.pA = sc.GetPersistentFloat(10); preview.idxA = sc.GetPersistentInt(20); preview.aType = AType;
                 preview.pB = sc.GetPersistentFloat(11); preview.idxB = sc.GetPersistentInt(21);
                 int sC = GetSnappedIndex(sc, sc.ActiveToolIndex, snapRange, (AType == 1));
                 preview.pC = (AType == 1) ? sc.High[sC] : sc.Low[sC]; preview.idxC = sC;
-                RefreshExpansionStrings(sc, preview); DrawExpansionPreformatted(preview, 10000, 58, true, true);
-            }
-        
-}
-
-      // Mechanizm GPU Safe-Lock: Wymuszamy redraw tylko gdy brak spływających danych (Offline)
-        // W SDK v2981 (2026) jedynym pewnym sposobem detekcji fazy ładowania historycznego
-        // jest sprawdzenie sc.IsFullRecalculation oraz sc.DownloadingHistoricalData.
-        if (cacheMissing) {
-            LastSize = -1;
-            if (sc.IsFullRecalculation != 0 || sc.DownloadingHistoricalData != 0) {
-                sc.FlagFullRecalculate = 1; 
+                RefreshExpansionStrings(sc, preview); 
+                DrawExpansionPreformatted(preview, 10000, 58, true, true);
             }
         }
-        
+
+        if (cacheMissing) {
+            LastSize = -1;
+            if (sc.IsFullRecalculation != 0 || sc.DownloadingHistoricalData != 0) sc.FlagFullRecalculate = 1; 
+        }
         if (StabCounter > 0) StabCounter--;
 
     } else {
         if (LastSize != -2) {
-
             for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
             for(int i = 0; i < 20; i++) for(int j = 0; j < 40; j++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, 30000 + (i * 40) + j);
             for (int i = 1; i <= 60; i++) for (int k = 0; k < sc.ArraySize; k++) sc.Subgraph[i][k] = 0;
             LastSize = -2; 
         }
     }
-}
+} // KONIEC FUNKCJI SCSF

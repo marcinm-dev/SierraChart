@@ -4,7 +4,7 @@ A Sierra Chart ACSIL study that recreates the DiNapoli expansion tool from Trade
 
 ## Versions
 
-Versions are git tags: `dinapoliabc-v13`, `dinapoliabc-v14`, `dinapoliabc-v15`, `dinapoliabc-v18`, `dinapoliabc-v19`, `dinapoliabc-v19b`, `dinapoliabc-v20`, `dinapoliabc-v21`, `dinapoliabc-v22`, `dinapoliabc-v23`, `dinapoliabc-v23b`, `dinapoliabc-v24`.
+Versions are git tags: `dinapoliabc-v13`, `dinapoliabc-v14`, `dinapoliabc-v15`, `dinapoliabc-v18`, `dinapoliabc-v19`, `dinapoliabc-v19b`, `dinapoliabc-v20`, `dinapoliabc-v21`, `dinapoliabc-v22`, `dinapoliabc-v23`, `dinapoliabc-v23b`, `dinapoliabc-v24`, `dinapoliabc-v26`.
 
 - **V13**: First saved version: three-click A-B-C expansion tool with 0.618, 1.000 and 1.618 levels, throttled redraw, cached bar indexes and pre-formatted price strings.
 - **V14**: Chart range and the Hide Chart Drawings menu ID computed once instead of on every redraw.
@@ -18,3 +18,4 @@ Versions are git tags: `dinapoliabc-v13`, `dinapoliabc-v14`, `dinapoliabc-v15`, 
 - **V23**: GPU safe-lock: rings redraw after an interval change (stabilisation frames input, forced recalculation) and a price guard for low-priced instruments.
 - **V23b**: Ring and subgraph names and values hidden from the data line, the Chart Values window and the spreadsheet.
 - **V24**: Arming the ABC button switches the cursor to Pointer through the Windows menu command.
+- **V26**: Custom tagging: a window for a text prefix after point C, prefix drawn left of the level prices, points committed on mouse release, study name and input values hidden.
