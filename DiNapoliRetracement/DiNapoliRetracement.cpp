@@ -5,7 +5,7 @@
 SCDLLName("DiNapoliRetracement")
 
 // =========================================================================
-// 🛑 [FROZEN BLOCK START]: BINARY ARCHITECTURE & PERSISTENCE
+// 馃洃 [FROZEN BLOCK START]: BINARY ARCHITECTURE & PERSISTENCE
 // DO NOT MODIFY, DO NOT SIMPLIFY, DO NOT REFACTOR THIS BLOCK
 // =========================================================================
 const int GLOBAL_SYNC_SLOT = 9999;
@@ -21,7 +21,7 @@ struct SavedRetracement {
     int idxF, idxR;
     int lastCheckedIdx;      
     float lastP;             // ETAP 2: Bufor ceny do String Cachingu
-    int reserved_unused;     // Pozostałe wolne miejsce
+    int reserved_unused;     // Pozosta艂e wolne miejsce
     char s38[32], s61[32], s100[32];
     int dw38, dw61, dw100;               
     bool isVisibleOnCurrentTF; 
@@ -33,11 +33,11 @@ struct DiNapoliData {
 };
 #pragma pack(pop)
 // =========================================================================
-// 🛑 [FROZEN BLOCK END]
+// 馃洃 [FROZEN BLOCK END]
 // =========================================================================
 
 // =========================================================================
-// 🛑 [FROZEN BLOCK START]: STABILITY ENGINE (TIME-PRICE ALIGNMENT)
+// 馃洃 [FROZEN BLOCK START]: STABILITY ENGINE (TIME-PRICE ALIGNMENT)
 // DO NOT MODIFY - PROTECTS TF STABILITY (Daily/H4/M5)
 // =========================================================================
 int FindBestMatchIndex(SCStudyInterfaceRef sc, float targetPrice, SCDateTime targetTime, bool isHigh, int searchRangeBars) {
@@ -68,7 +68,7 @@ int GetSnappedIndex(SCStudyInterfaceRef sc, int mouseIdx, int range, bool findHi
     return bestIdx;
 }
 // =========================================================================
-// 🛑 [FROZEN BLOCK END]
+// 馃洃 [FROZEN BLOCK END]
 // =========================================================================
 
 void SaveDiNapoliData(SCStudyInterfaceRef sc, DiNapoliData* pData) {
@@ -87,7 +87,7 @@ void LoadDiNapoliData(SCStudyInterfaceRef sc, DiNapoliData* pData) {
 
 void RefreshRetracementStrings(SCStudyInterfaceRef sc, SavedRetracement& ret) {
     // --- ETAP 2: STRING CACHING GATE ---
-    // Jeśli cena nie zmieniła się i mamy już dane w buforze - wyjdź
+    // Je艣li cena nie zmieni艂a si臋 i mamy ju偶 dane w buforze - wyjd藕
     if (fabs(ret.pR - ret.lastP) < 0.0000001f && ret.dw100 > 0) return;
 
     SCString t = sc.FormatGraphValue(ret.pR, sc.BaseGraphValueFormat);
@@ -110,7 +110,7 @@ void RefreshRetracementStrings(SCStudyInterfaceRef sc, SavedRetracement& ret) {
 }
 
 // =========================================================================
-// 🛑 [FROZEN BLOCK START]: GDI GPU GUARD & REDRAW GATE
+// 馃洃 [FROZEN BLOCK START]: GDI GPU GUARD & REDRAW GATE
 // DO NOT MODIFY - PROTECTS AGAINST COLD START (pY == 0) AND JITTER
 // =========================================================================
 
@@ -119,7 +119,7 @@ void DrawReactionGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
     if (!pData) return;
     
    // --- ETAP 3: GDI SLAVE MODE (DECISION BRIDGE) ---
-    // GDI ufa wyłącznie decyzji podjętej w głównej pętli (Slot 5)
+    // GDI ufa wy艂膮cznie decyzji podj臋tej w g艂贸wnej p臋tli (Slot 5)
   bool effectiveIsVisible = (sc.GetPersistentInt(5) == 1);
     if (!effectiveIsVisible) return;
 
@@ -131,7 +131,7 @@ void DrawReactionGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
     int TState = sc.GetPersistentInt(1);
     SCDateTime sessionTime = sc.GetPersistentSCDateTime(10);
 
-    // Wspólna funkcja rysująca (Jedna Lambda) eliminująca "split"
+    // Wsp贸lna funkcja rysuj膮ca (Jedna Lambda) eliminuj膮ca "split"
     auto DrawSolidLine = [&](int idxR, float price, int type, int step, int dw) {
         int xS = sc.BarIndexToXPixelCoordinate(idxR) + finalOffset; 
         int xE = sc.BarIndexToXPixelCoordinate(sc.ArraySize + (step * dw) + dw);
@@ -141,7 +141,7 @@ void DrawReactionGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
             // Ujednolicony Nudge: +1px dla High (type 2), 0px dla Low (type 1)
             int yAdjusted = yBase + (type == 2 ? 1 : 0);
             
-            // Rysujemy dwa rzędy 1-pikselowe, co daje idealne 2 piksele grubości
+            // Rysujemy dwa rz臋dy 1-pikselowe, co daje idealne 2 piksele grubo艣ci
             for (int h = 0; h < 2; h++) {
                 MoveToEx(hDC, xS, yAdjusted - h, NULL); 
                 LineTo(hDC, xE, yAdjusted - h); 
@@ -155,7 +155,7 @@ void DrawReactionGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
         if (r.pF <= 0 || (!r.isVisibleOnCurrentTF && !isCurrentSession) || r.idxR < 0) continue;
 
         // --- OPTYMALIZACJA: GDI VISIBILITY CULLING ---
-        // Pomiń rysowanie, jeśli punkt startowy linii jest poza prawą krawędzią widocznego zakresu
+        // Pomi艅 rysowanie, je艣li punkt startowy linii jest poza praw膮 kraw臋dzi膮 widocznego zakresu
         if (r.idxR > sc.IndexOfLastVisibleBar) continue;
 
         DrawSolidLine(r.idxR, r.pR, r.type, r.step, r.dw100);
@@ -170,7 +170,7 @@ void DrawReactionGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
 
 
 // =========================================================================
-// 🛑 [FROZEN BLOCK END]
+// 馃洃 [FROZEN BLOCK END]
 // =========================================================================
 
 // --- DYNAMICZNE WYSZUKIWANIE ID MENU (ZGODNE ZE STANDAREM V81+) ---
@@ -181,7 +181,7 @@ int FindSierraMenuCommandID(HWND hRoot, const char* menuName, const char* itemNa
     for (int i = 0; i < menuCount; i++) {
         char buf[128];
         GetMenuStringA(hMenu, i, buf, 128, MF_BYPOSITION);
-        // Używamy strstr zamiast strcmp, aby obsłużyć "&Tools"
+        // U偶ywamy strstr zamiast strcmp, aby obs艂u偶y膰 "&Tools"
         if (strstr(buf, menuName)) { 
             HMENU hSub = GetSubMenu(hMenu, i);
             if (!hSub) continue;
@@ -216,11 +216,12 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         sc.Input[7].Name = "Sync z Master HIDE (Button 20)"; sc.Input[7].SetYesNo(1);
         sc.Input[8].Name = "Master Hide Button ID"; sc.Input[8].SetInt(20);
         sc.Input[9].Name = "Przycisk RETR DEL"; sc.Input[9].SetInt(23); 
-        sc.Input[11].Name = "Search Range Bars (TF Stability)"; sc.Input[11].SetInt(10);
+        sc.Input[11].Name = "Search Range Bars (TF Stability)"; sc.Input[11].SetInt(25);
         sc.Input[12].Name = "Min Bars Cluster Visibility"; sc.Input[12].SetInt(3);
-       sc.Input[13].Name = "Korekta przesunięcia GDI (piksele)"; sc.Input[13].SetInt(0);
-        sc.Input[14].Name = "GPU Safe-Lock Frames (Offline)"; sc.Input[14].SetInt(10);
+       sc.Input[13].Name = "Korekta przesuni臋cia GDI (piksele)"; sc.Input[13].SetInt(0);
+sc.Input[14].Name = "GPU Safe-Lock Frames (Offline)"; sc.Input[14].SetInt(10);
         sc.Input[15].Name = "Enable Trailing Focus"; sc.Input[15].SetYesNo(1);
+        sc.Input[16].Name = "Focus Retro-Scan Lookback (Bars)"; sc.Input[16].SetInt(6);
 
         for (int i = 1; i <= 60; i++) {
             sc.Subgraph[i].Name.Format("Ring %d", i); sc.Subgraph[i].DrawStyle = DRAWSTYLE_CIRCLE_HOLLOW; 
@@ -228,9 +229,9 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
             sc.Subgraph[i].DisplayNameValueInDataLine = 0; 
             
             // --- POPRAWKA: Oficjalne komendy ACSIL ---
-            // Wyłącza wyświetlanie w oknie "Chart Values" [cite: 531]
+            // Wy艂膮cza wy艣wietlanie w oknie "Chart Values" [cite: 531]
             sc.Subgraph[i].DisplayNameValueInWindowsFlags = 0; 
-            // Wyłącza eksport do arkusza kalkulacyjnego [cite: 638]
+            // Wy艂膮cza eksport do arkusza kalkulacyjnego [cite: 638]
             sc.Subgraph[i].IncludeInSpreadsheet = 0; 
         }
         return;
@@ -266,7 +267,7 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
 
     if (sc.IsFullRecalculation || *phPen == NULL) {
         if (*phPen) DeleteObject(*phPen);
-        // Zmieniamy na 1, aby pętla w GDI mogła narysować dokładnie 2 rzędy
+        // Zmieniamy na 1, aby p臋tla w GDI mog艂a narysowa膰 dok艂adnie 2 rz臋dy
         *phPen = CreatePen(PS_SOLID, 1, sc.Input[3].GetColor());
     }
     // ------------------------------------------
@@ -291,7 +292,7 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         LastSize = -1; // Soft Redraw Signal - wymusza otwarcie bramki
         if (currentGlobalHide == LastSyncValue) {
             effectiveIsVisible = !effectiveIsVisible;
-            LastSyncValue = effectiveIsVisible ? 0 : 1; // Wyrównanie predykcyjne
+            LastSyncValue = effectiveIsVisible ? 0 : 1; // Wyr贸wnanie predykcyjne
         }
     }
 
@@ -312,7 +313,45 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         sc.SetCustomStudyControlBarButtonEnable(Btn, 0); sc.SetCustomStudyControlBarButtonEnable(RetrDelBtn, 0); sc.MenuEventID = 0; 
     }
 
-    if (sc.CharacterEventCode == 32 && TState > 0) {
+if (sc.CharacterEventCode == 32 && TState > 0) {
+        // --- MODU艁: RETROSPECTIVE FOCUS GUARD (RFG) ---
+        SCDateTime sessionTime = sc.GetPersistentSCDateTime(10);
+        int fType = sc.GetPersistentInt(11); // 1-High, 2-Low
+        int lookback = sc.Input[16].GetInt();
+        int idxF = sc.GetContainingIndexForSCDateTime(sc.ChartNumber, sessionTime);
+
+        if (idxF >= 0 && lookback > 0) {
+            int startScan = max(0, idxF - lookback);
+            float bestP = (fType == 1) ? sc.High[idxF] : sc.Low[idxF];
+            int bestIdx = idxF;
+
+            // Szukamy lepszego ekstremum w oknie retrospektywnym
+            for (int j = startScan; j <= idxF; j++) {
+                float val = (fType == 1) ? sc.High[j] : sc.Low[j];
+                if ((fType == 1 && val > bestP) || (fType == 2 && val < bestP)) {
+                    bestP = val;
+                    bestIdx = j;
+                }
+            }
+
+            // Je艣li znaleziono lepszy punkt, korygujemy wszystkie siatki tej sesji
+            if (bestIdx != idxF) {
+                bool dataChanged = false;
+                for (int i = 0; i < pData->numSaved; i++) {
+                    if (fabs(pData->retracements[i].tF.GetAsDouble() - sessionTime.GetAsDouble()) < 0.0000001) {
+                        pData->retracements[i].pF = bestP;
+                        pData->retracements[i].tF = sc.BaseDateTimeIn[bestIdx];
+                        pData->retracements[i].idxF = bestIdx;
+                        RefreshRetracementStrings(sc, pData->retracements[i]);
+                        dataChanged = true;
+                    }
+                }
+                if (dataChanged) SaveDiNapoliData(sc, pData);
+            }
+        }
+        // --- KONIEC MODU艁U RFG ---
+
+        // Standardowy reset sesji i czyszczenie podgl膮du
         for(int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
         for (int k = sc.IndexOfFirstVisibleBar; k <= sc.IndexOfLastVisibleBar; k++) { sc.Subgraph[59][k] = 0; sc.Subgraph[60][k] = 0; }
         TState = 0; LastSize = -1; sc.SetCustomStudyControlBarButtonEnable(Btn, 0); sc.CharacterEventCode = 0; 
@@ -341,13 +380,13 @@ if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == Btn)
         TState = 1; 
         SessionSteps = 0; 
 
-        // PROFESJONALNE PRZEŁĄCZENIE PRZEZ WINAPI + CACHING (SLOT 45)
+        // PROFESJONALNE PRZE艁膭CZENIE PRZEZ WINAPI + CACHING (SLOT 45)
         HWND hRoot = ::GetAncestor((HWND)sc.ChartWindowHandle, GA_ROOT);
         if (hRoot != NULL)
         {
-            int& CachedPointerID = sc.GetPersistentInt(45); // Używamy wolnego slotu 45
+            int& CachedPointerID = sc.GetPersistentInt(45); // U偶ywamy wolnego slotu 45
 
-            // Skanujemy menu tylko raz na sesję
+            // Skanujemy menu tylko raz na sesj臋
             if (CachedPointerID <= 0) {
                 CachedPointerID = FindSierraMenuCommandID(hRoot, "Tools", "Pointer");
             }
@@ -359,7 +398,7 @@ if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == Btn)
     }
     
     // =========================================================================
-    // 🛑 [FROZEN BLOCK START]: LVS & PYRAMID GUARD (INTERACTION)
+    // 馃洃 [FROZEN BLOCK START]: LVS & PYRAMID GUARD (INTERACTION)
     // DO NOT MODIFY - PROTECTS THE 1-TICK BUMPER AND PYRAMID MONOTONICITY
     // =========================================================================
     if (TState > 0) {
@@ -398,25 +437,36 @@ if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == Btn)
         }
     }
     // =========================================================================
-    // 🛑 [FROZEN BLOCK END]
+    // 馃洃 [FROZEN BLOCK END]
     // =========================================================================
 
-// --- IMPLEMENTACJA KONCEPCJI 1 (IMMUNITET SESYJNY) ---
+// --- IMPLEMENTACJA KONCEPCJI 1 (IMMUNITET SESYJNY) - OPTYMALIZACJA LAZY UPDATE ---
     bool trailingUpdated = false; 
     if (sc.Input[15].GetYesNo()) {
-
         SCDateTime sA = sc.GetPersistentSCDateTime(10);
         for (int i = 0; i < pData->numSaved; i++) {
             SavedRetracement& r = pData->retracements[i];
             
-            // Bypass dla siatek z aktywnej sesji: Zapobiega zrywaniu synchronizacji (isCurSes) w Preview
+            // Bypass dla siatek z aktywnej sesji
             if (TState > 0 && fabs(r.tF.GetAsDouble() - sA.GetAsDouble()) < 0.0000001) continue;
 
             int startScan = max(r.idxF, r.lastCheckedIdx);
+            bool individualUpdate = false;
+
+            // P臋tla skanuj膮ca historyczne bary lub gwa艂towne ruchy ceny
             for (int j = startScan; j < sc.ArraySize; j++) { 
                 if ((r.type == 1 && sc.High[j] > r.pF) || (r.type == 2 && sc.Low[j] < r.pF)) { 
-                    r.pF = (r.type == 1) ? sc.High[j] : sc.Low[j]; r.tF = sc.BaseDateTimeIn[j]; r.idxF = j; RefreshRetracementStrings(sc, r); trailingUpdated = true; 
+                    r.pF = (r.type == 1) ? sc.High[j] : sc.Low[j]; 
+                    r.tF = sc.BaseDateTimeIn[j]; 
+                    r.idxF = j; 
+                    individualUpdate = true; // Tylko odnotowujemy zmian臋 ceny
                 } 
+            }
+
+            // RefreshStrings wywo艂ujemy TYLKO RAZ po zako艅czeniu skanowania wszystkich bar贸w
+            if (individualUpdate) {
+                RefreshRetracementStrings(sc, r); 
+                trailingUpdated = true;
             }
             r.lastCheckedIdx = sc.ArraySize - 1;
         }
@@ -424,7 +474,7 @@ if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == Btn)
     if (trailingUpdated) SaveDiNapoliData(sc, pData);
 
     // =========================================================================
-    // 🛑 [FROZEN BLOCK START]: PIXEL-PERFECT NUDGE (GETYADJ)
+    // 馃洃 [FROZEN BLOCK START]: PIXEL-PERFECT NUDGE (GETYADJ)
     // DO NOT MODIFY - PROTECTS LABEL HIT TOLERANCE AND ASYMMETRIC NUDGE
     // =========================================================================
 
@@ -445,7 +495,7 @@ if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == Btn)
         
         float yResult = (float)sc.YPixelCoordinateToGraphValue(pY + (isHigh ? 1 : 0));
 
-        // Weryfikacja wiarygodności (Standard Ultra-Stable 2026)
+        // Weryfikacja wiarygodno艣ci (Standard Ultra-Stable 2026)
         // Forex fix: 0.00001f zamiast 1.0f dla wsparcia par walutowych
         if (yResult <= 0.00001f || (p > 0.00001f && fabsf(yResult - p) / p > 0.20f)) { 
             cacheMissing = true; 
@@ -456,7 +506,7 @@ if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == Btn)
 
 
     // =========================================================================
-    // 🛑 [FROZEN BLOCK END]
+    // 馃洃 [FROZEN BLOCK END]
     // =========================================================================
 
     if (effectiveIsVisible && (needsRedraw || TState > 0)) {
@@ -475,7 +525,7 @@ auto L = [&](float p, float v, COLORREF c, const char* n, int id, const char* la
                 int yCoord = sc.RegionValueToYPixelCoordinate(p, sc.GraphRegion);
                 if (yCoord == 0) { cacheMissing = true; return; }
 
-                // Rysuj linię TYLKO jeśli szerokość > 0 (blokuje to rysowanie poziomu 1.000 przez ten silnik)
+                // Rysuj lini臋 TYLKO je艣li szeroko艣膰 > 0 (blokuje to rysowanie poziomu 1.000 przez ten silnik)
                 if (width > 0) {
                     p_T->Clear(); p_T->AddMethod = UTAM_ADD_OR_ADJUST; p_T->DrawingType = DRAWING_LINE; p_T->BeginIndex = lineStartIdx; p_T->EndIndex = lineEndIdx; p_T->BeginValue = p; p_T->EndValue = p; p_T->Color = c; p_T->LineWidth = width; p_T->LineNumber = id; sc.UseTool(*p_T);
                 }
@@ -501,7 +551,7 @@ auto L = [&](float p, float v, COLORREF c, const char* n, int id, const char* la
             RefreshRetracementStrings(sc, pr);
             sc.GetPersistentInt(14) = pr.dw100; // Hoisting dla GDI
             
-            // Zabezpieczenie przed błędem indeksu (-1), rysowanie poziomów mimo "złego" Focusa
+            // Zabezpieczenie przed b艂臋dem indeksu (-1), rysowanie poziom贸w mimo "z艂ego" Focusa
             if (pr.idxF >= 0 && pr.idxF < sc.ArraySize) sc.Subgraph[59][pr.idxF] = GetYAdjPr(pr.pF, (pr.type == 1)); 
             if (pr.idxR >= 0 && pr.idxR < sc.ArraySize) sc.Subgraph[60][pr.idxR] = GetYAdjPr(pr.pR, (pr.type == 2));
             
