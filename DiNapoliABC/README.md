@@ -19,3 +19,9 @@ Versions are git tags: `dinapoliabc-v13`, `dinapoliabc-v14`, `dinapoliabc-v15`, 
 - **V23b**: Ring and subgraph names and values hidden from the data line, the Chart Values window and the spreadsheet.
 - **V24**: Arming the ABC button switches the cursor to Pointer through the Windows menu command.
 - **V26**: Custom tagging: a window for a text prefix after point C, prefix drawn left of the level prices, points committed on mouse release, study name and input values hidden.
+
+## Notes
+
+- The version numbers are the number of the author's working session. There is no saved code for V1-V12 (they came before the first saved snapshot; their results are already part of V13), for V16 (research on the look of the rings, the result is visible in V15), for V17 (a first subgraph attempt that V18 replaced) and for V25 (a report on the prefix window; the code first appears in V26). V19b is the second report that was numbered 19, and V23b is a snapshot from 12 April that has no report of its own; both numbers were added here.
+- Inside the code the study is called `DiNapoli Expansion` (function `scsf_DiNapoliExpansion`, DLL name `DiNapoliExpansion`); the folder is called `DiNapoliABC` after the author's own file name.
+- The history was added to this repository later, from the author's own notes. The commit date of each version is the date on which that code snapshot was saved (US Eastern time), not the day it was uploaded. The code is copied unchanged, including the Polish comments.
