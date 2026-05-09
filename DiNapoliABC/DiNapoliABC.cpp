@@ -282,7 +282,7 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         sc.Input[8].Name = "Przycisk HIDE"; sc.Input[8].SetInt(20);
         sc.Input[9].Name = "Przycisk LAST DEL"; sc.Input[9].SetInt(21);
         sc.Input[10].Name = "Przycisk ALL DEL"; sc.Input[10].SetInt(22);
-       sc.Input[11].Name = "Search Range Bars"; sc.Input[11].SetInt(10);
+       sc.Input[11].Name = "Search Range Bars"; sc.Input[11].SetInt(25);
         sc.Input[12].Name = "Min Bars Visibility Threshold"; sc.Input[12].SetInt(3);
         sc.Input[13].Name = "Korekta przesunięcia GDI (piksele)"; sc.Input[13].SetInt(0);
         sc.Input[14].Name = "GPU Safe-Lock Frames (Offline)"; sc.Input[14].SetInt(10); // Domyślnie 10 klatek
@@ -410,8 +410,29 @@ SCSFExport scsf_DiNapoliExpansion(SCStudyInterfaceRef sc)
         TState = 0; sc.SetCustomStudyControlBarButtonEnable(DrawBtn, 0); LastSize = -1;
     }
 
-    if (!sc.DownloadingHistoricalData) {
-        if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == DrawBtn) { TState = 1; }
+
+if (!sc.DownloadingHistoricalData) {
+        if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == DrawBtn) 
+        { 
+            TState = 1; 
+
+            // WYMUSZONY POINTER PRZEZ WINAPI + CACHING (SLOT 45)
+            HWND hRoot = ::GetAncestor((HWND)sc.ChartWindowHandle, GA_ROOT);
+            if (hRoot != NULL)
+            {
+                int& CachedPointerID = sc.GetPersistentInt(45); 
+
+                // Skanowanie menu Tools -> Pointer tylko raz na sesję
+                if (CachedPointerID <= 0) {
+                    CachedPointerID = FindSierraMenuCommandID(hRoot, "Tools", "Pointer");
+                }
+                
+                // Wysłanie priorytetowego komunikatu do jądra Windows
+                if (CachedPointerID > 0) {
+                    ::PostMessageA(hRoot, WM_COMMAND, CachedPointerID, 0);
+                }
+            }
+        }
         int cIdx = sc.ActiveToolIndex; float mY = (float)sc.ActiveToolYValue;
         if (sc.PointerEventType == SC_POINTER_BUTTON_DOWN && TState > 0) {
             if (TState == 1) {
