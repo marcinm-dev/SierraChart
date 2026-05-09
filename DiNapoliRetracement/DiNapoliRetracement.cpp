@@ -173,6 +173,30 @@ void DrawReactionGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
 // 🛑 [FROZEN BLOCK END]
 // =========================================================================
 
+// --- DYNAMICZNE WYSZUKIWANIE ID MENU (ZGODNE ZE STANDAREM V81+) ---
+int FindSierraMenuCommandID(HWND hRoot, const char* menuName, const char* itemName) {
+    HMENU hMenu = GetMenu(hRoot);
+    if (!hMenu) return -1;
+    int menuCount = GetMenuItemCount(hMenu);
+    for (int i = 0; i < menuCount; i++) {
+        char buf[128];
+        GetMenuStringA(hMenu, i, buf, 128, MF_BYPOSITION);
+        // Używamy strstr zamiast strcmp, aby obsłużyć "&Tools"
+        if (strstr(buf, menuName)) { 
+            HMENU hSub = GetSubMenu(hMenu, i);
+            if (!hSub) continue;
+            int subCount = GetMenuItemCount(hSub);
+            for (int j = 0; j < subCount; j++) {
+                GetMenuStringA(hSub, j, buf, 128, MF_BYPOSITION);
+                if (strstr(buf, itemName)) return GetMenuItemID(hSub, j);
+            }
+        }
+    }
+    return -1;
+}
+
+
+
 SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
 {
     if (sc.SetDefaults) {
@@ -312,7 +336,27 @@ SCSFExport scsf_DiNapoliRetracement(SCStudyInterfaceRef sc)
         }
     }
 
-    if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == Btn) { TState = 1; SessionSteps = 0; }
+if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == Btn) 
+    { 
+        TState = 1; 
+        SessionSteps = 0; 
+
+        // PROFESJONALNE PRZEŁĄCZENIE PRZEZ WINAPI + CACHING (SLOT 45)
+        HWND hRoot = ::GetAncestor((HWND)sc.ChartWindowHandle, GA_ROOT);
+        if (hRoot != NULL)
+        {
+            int& CachedPointerID = sc.GetPersistentInt(45); // Używamy wolnego slotu 45
+
+            // Skanujemy menu tylko raz na sesję
+            if (CachedPointerID <= 0) {
+                CachedPointerID = FindSierraMenuCommandID(hRoot, "Tools", "Pointer");
+            }
+            
+            if (CachedPointerID > 0) {
+                ::PostMessageA(hRoot, WM_COMMAND, CachedPointerID, 0);
+            }
+        }
+    }
     
     // =========================================================================
     // 🛑 [FROZEN BLOCK START]: LVS & PYRAMID GUARD (INTERACTION)
