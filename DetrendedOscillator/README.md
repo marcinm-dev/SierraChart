@@ -20,3 +20,4 @@ Versions are git tags: `detrendedoscillator-v1`, `detrendedoscillator-v2`, `detr
 - The source file is `DetrendedCombo.cpp` in every version. The DLL name and the call `DetrendedCombo.scsf_DO_Engine` depend on it. The author's notes call the early files `DetrendedOscillator.cpp`; here all versions share one file name.
 - V4 and V5 still export `scsf_DetrendedOscillator` without a short name, although the notes describe restoring `scsf_DiNapoliDetrendedOscillator` and the short name `DDO` at the end of the V4 session. That fix was never saved in a snapshot, so the versions are kept exactly as saved.
 - The commit dates are the dates the code snapshots were saved (US Eastern time). Code comments are in Polish and unchanged.
+- V8 is the version the author has tested in Sierra Chart.
