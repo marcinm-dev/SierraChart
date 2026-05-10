@@ -54,6 +54,7 @@ sc.UpdateAlways = 0; // CPU Guard: Aktualizacja tylko przy nowym ticku
         Detrend.LineWidth = 1;
         Detrend.DisplayNameValueInDataLine = 0;
         Detrend.DisplayNameValueInWindowsFlags = 1;
+		Detrend.LineLabel = LL_DISPLAY_VALUE  | LL_VALUE_ALIGN_VALUES_SCALE | LL_VALUE_ALIGN_CENTER;
         Detrend.IncludeInSpreadsheet = 0; // Spreadsheet Guard
 
         // 2. Linia zerowa
