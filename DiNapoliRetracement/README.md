@@ -4,7 +4,7 @@ A Sierra Chart ACSIL study that recreates the DiNapoli retracement tool from Tra
 
 ## Versions
 
-Versions are git tags: `dinapoliretracement-v3`, `dinapoliretracement-v5`, `dinapoliretracement-v6`, `dinapoliretracement-v7`, `dinapoliretracement-v8`, `dinapoliretracement-v9`, `dinapoliretracement-v10`, `dinapoliretracement-v11`, `dinapoliretracement-v13`, `dinapoliretracement-v16`, `dinapoliretracement-v17`, `dinapoliretracement-v18`, `dinapoliretracement-v20`, `dinapoliretracement-v21`, `dinapoliretracement-v22`, `dinapoliretracement-v23`, `dinapoliretracement-v24`.
+Versions are git tags: `dinapoliretracement-v3`, `dinapoliretracement-v5`, `dinapoliretracement-v6`, `dinapoliretracement-v7`, `dinapoliretracement-v8`, `dinapoliretracement-v9`, `dinapoliretracement-v10`, `dinapoliretracement-v11`, `dinapoliretracement-v13`, `dinapoliretracement-v16`, `dinapoliretracement-v17`, `dinapoliretracement-v18`, `dinapoliretracement-v20`, `dinapoliretracement-v21`, `dinapoliretracement-v22`, `dinapoliretracement-v23`, `dinapoliretracement-v24`, `dinapoliretracement-v25`.
 
 - **V3**: First saved version: two-click Focus and Reaction tool with 0.382, 0.618 and 1.000 levels and incremental trailing focus.
 - **V5**: Rings drawn as native subgraphs, GPU price-scale guard and full subgraph wipe on recalculation.
@@ -23,3 +23,4 @@ Versions are git tags: `dinapoliretracement-v3`, `dinapoliretracement-v5`, `dina
 - **V22**: Rings redraw after an interval change (GPU safe-lock stabilisation frames, offline heartbeat).
 - **V23**: Arming RETR switches the cursor to Pointer through the Windows menu command.
 - **V24**: Trailing focus fixed and a retrospective focus scan on Space (Focus Retro-Scan Lookback input).
+- **V25**: Ghost mode: study name, input values and subgraph labels hidden in headers and panels.
