@@ -4,7 +4,7 @@
 
 SCDLLName("FibonacciGrid")
 
-// --- BEZPIECZEŃSTWO BINARNE: Płaska struktura modelu A-B ---
+// --- BEZPIECZEŃSTWO BINARNE: Płaska struktura fali z indywidualnymi parametrami stref ---
 #pragma pack(push, 1)
 struct SavedGrid {
     float priceA;
@@ -14,13 +14,21 @@ struct SavedGrid {
     int idxA;
     int idxB;
     float calculatedPrices[10];
+    int lineNumber;           
+    float customRatios[5];    // ETAP 3: Indywidualne współczynniki rynkowe poziomu
+    COLORREF customColors[5]; // ETAP 3: Indywidualne kolory linii i napisów GDI
+    int customUse[5];         // ETAP 3: Status widoczności (0 = Ukryta, 1 = Aktywna)
 };
 
 struct FibonacciData {
-    SavedGrid drawings[30]; // ROZSZERZENIE: Płaski bufor binarnego zapisu do 30 siatek jednocześnie
-    int numSaved;           // Globalny licznik monitorujący całkowitą liczbę stworzonych rysunków
+    SavedGrid drawings[30]; 
+    int numSaved;           
     int TState;
     int LastSize;
+    int DraggingIdx;        
+    int DraggedPoint;       
+    int SelectedIdx;        
+    unsigned int LastClickTime; // ETAP 3: Rejestr czasu dla asynchronicznego emulatora dwukliku
 };
 #pragma pack(pop)
 
@@ -73,6 +81,146 @@ int GetSnappedIndex(SCStudyInterfaceRef sc, int mouseIdx, int range, bool findHi
     return bestIdx;
 }
 
+// --- ETAP 3: PROGRAMOWA PROCEDURA OKNA MODALNEGO (WYGODA Z TRADE NAVIGATORA) ---
+LRESULT CALLBACK ModalConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    SavedGrid* pGrid = (SavedGrid*)GetWindowLongPtrA(hWnd, GWLP_USERDATA);
+
+    switch (message) {
+    case WM_CREATE: {
+        CREATESTRUCTA* pCreate = (CREATESTRUCTA*)lParam;
+        pGrid = (SavedGrid*)pCreate->lpCreateParams;
+        SetWindowLongPtrA(hWnd, GWLP_USERDATA, (LONG_PTR)pGrid);
+
+        // Generowanie tabeli kontrolerów dla 5 testowych poziomów
+        for (int i = 0; i < 5; i++) {
+            // Kolumna 1: Checkbox widoczności "Use" (Poprawne rzutowanie HMENU eliminuje warningi kompilacji 64-bit)
+            HWND hCheck = ::CreateWindowA("BUTTON", "", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 25 + i * 35, 20, 20, hWnd, (HMENU)(UINT_PTR)(100 + i), NULL, NULL);
+            SendMessageA(hCheck, BM_SETCHECK, pGrid->customUse[i] ? BST_CHECKED : BST_UNCHECKED, 0);
+
+            // Kolumna 2: Pole edycji współczynnika "Ratio"
+            char buf[32];
+            sprintf(buf, "%g", pGrid->customRatios[i]);
+            ::CreateWindowA("EDIT", buf, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 50, 25 + i * 35, 60, 20, hWnd, (HMENU)(UINT_PTR)(200 + i), NULL, NULL);
+
+            // Kolumna 3: Przycisk otwierający okno palety
+            ::CreateWindowA("BUTTON", "Color...", WS_CHILD | WS_VISIBLE, 125, 25 + i * 35, 65, 20, hWnd, (HMENU)(UINT_PTR)(300 + i), NULL, NULL);
+        }
+
+        // Przyciski akcji na dole okna dialogowego
+        ::CreateWindowA("BUTTON", "OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 40, 220, 80, 25, hWnd, (HMENU)(UINT_PTR)IDOK, NULL, NULL);
+        ::CreateWindowA("BUTTON", "Cancel", WS_CHILD | WS_VISIBLE, 140, 220, 80, 25, hWnd, (HMENU)(UINT_PTR)IDCANCEL, NULL, NULL);
+        break;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = ::BeginPaint(hWnd, &ps);
+        if (pGrid) {
+            // Kolumna 4: Dynamiczne rysowanie próbek kwadratów koloru poziomu (Wzór Trade Navigatora)
+            for (int i = 0; i < 5; i++) {
+                HBRUSH hBrush = ::CreateSolidBrush(pGrid->customColors[i]);
+                RECT r = { 205, 25 + i * 35, 235, 25 + i * 35 + 20 };
+                ::FillRect(hdc, &r, hBrush);
+                ::DeleteObject(hBrush);
+            }
+        }
+        ::EndPaint(hWnd, &ps);
+        break;
+    }
+    case WM_COMMAND: {
+        if (!pGrid) return ::DefWindowProcA(hWnd, message, wParam, lParam);
+        int wmId = LOWORD(wParam);
+
+        // Przechwycenie kliknięcia w przycisk zmiany koloru danej strefy
+        if (wmId >= 300 && wmId < 305) {
+            int idx = wmId - 300;
+            CHOOSECOLORA cc;
+            static COLORREF acrCustClr[16];
+            ZeroMemory(&cc, sizeof(cc));
+            cc.lStructSize = sizeof(cc);
+            cc.hwndOwner = hWnd;
+            cc.lpCustColors = (LPDWORD)acrCustClr;
+            cc.rgbResult = pGrid->customColors[idx];
+            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+
+            // FORTYFIKACJA LINKERA: Dynamiczne załadowanie biblioteki comdlg32.dll w locie z jądra OS Windows
+            HMODULE hComDlg = ::LoadLibraryA("comdlg32.dll");
+            if (hComDlg) {
+                typedef BOOL (WINAPI* LPFNCHOOSECOLORA)(CHOOSECOLORA*);
+                LPFNCHOOSECOLORA pChooseColorA = (LPFNCHOOSECOLORA)::GetProcAddress(hComDlg, "ChooseColorA");
+                if (pChooseColorA && pChooseColorA(&cc)) {
+                    pGrid->customColors[idx] = cc.rgbResult;
+                    ::InvalidateRect(hWnd, NULL, TRUE); // Natychmiastowe odświeżenie kwadratu próbki koloru
+                }
+                ::FreeLibrary(hComDlg);
+            }
+        }
+        else if (wmId == IDOK) {
+            // Zatwierdzenie i przepisanie wprowadzonych wartości do pamięci RAM
+            for (int i = 0; i < 5; i++) {
+                HWND hCheck = ::GetDlgItem(hWnd, 100 + i);
+                pGrid->customUse[i] = (::SendMessageA(hCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
+
+                HWND hEdit = ::GetDlgItem(hWnd, 200 + i);
+                char buf[64];
+                ::GetWindowTextA(hEdit, buf, 64);
+                pGrid->customRatios[i] = (float)atof(buf);
+            }
+            ::DestroyWindow(hWnd);
+        }
+        else if (wmId == IDCANCEL) {
+            ::DestroyWindow(hWnd);
+        }
+        break;
+    }
+case WM_DESTROY:
+        // NAPRAWA ETAPU 4: Usunięto PostQuitMessage(0) - to ono bezprawnie pożerało wątek główny jądra Sierra Chart!
+        break;
+    default:
+        return ::DefWindowProcA(hWnd, message, wParam, lParam);
+    }
+    return 0;
+}
+
+// Funkcja zarządzająca wstrzykiwaniem okna i blokowaniem wątku nadrzędnego (Trwały Tryb Modalny)
+void ShowModalConfig(HWND hParent, SavedGrid& grid) {
+    WNDCLASSA wc = {0};
+    wc.lpfnWndProc = ModalConfigWndProc;
+    wc.hInstance = ::GetModuleHandleA(NULL);
+    wc.hCursor = ::LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = "FibGridConfigClass";
+    ::RegisterClassA(&wc);
+
+    HWND hwndDlg = ::CreateWindowExA(WS_EX_DLGMODALFRAME, "FibGridConfigClass", "Properties (1 Profile / 5 Levels)", 
+        WS_POPUPWINDOW | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 265, 300, hParent, NULL, wc.hInstance, &grid);
+
+    if (!hwndDlg) return;
+
+    // Centrowanie geometryczne okna właściwości względem środka wykresu Sierra Chart
+    RECT rectP, rectC;
+    ::GetWindowRect(hParent, &rectP);
+    ::GetWindowRect(hwndDlg, &rectC);
+    int x = rectP.left + (rectP.right - rectP.left - (rectC.right - rectC.left)) / 2;
+    int y = rectP.top + (rectP.bottom - rectP.top - (rectC.bottom - rectC.top)) / 2;
+    ::SetWindowPos(hwndDlg, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+
+    ::EnableWindow(hParent, FALSE); // ZAMROŻENIE SIERRY: Pełna blokada modalna
+    ::ShowWindow(hwndDlg, SW_SHOW);
+    ::UpdateWindow(hwndDlg);
+
+    MSG msg;
+    while (::IsWindow(hwndDlg)) {
+        if (::PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+            ::TranslateMessage(&msg);
+            ::DispatchMessageA(&msg);
+        } else {
+            ::Sleep(5);
+        }
+    }
+    ::EnableWindow(hParent, TRUE); // ODBLOKOWANIE SIERRY po zamknięciu okna
+    ::SetFocus(hParent);
+}
+
 // --- ETAP 5: SILNIK RENDERUJĄCY GDI (Czyste Win32 API) ---
 void DrawFibonacciGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
     FibonacciData* pData = (FibonacciData*)sc.GetPersistentPointer(500);
@@ -93,85 +241,135 @@ HPEN hDashPen = ::CreatePen(PS_DASH, 1, RGB(128, 128, 128));  // Przerywane dla 
 // Matematyczne wyznaczenie indeksu aktualnie rysowanego obiektu w maszynie stanów
     int activeSlot = pData->numSaved % 30;
 
+
 // 1. LOGIKA LIVE PREVIEW (Inteligentne, wymuszone przyciąganie horyzontalno-pionowe w locie)
     if (pData->TState == 2) {
         int xA = sc.BarIndexToXPixelCoordinate(pData->drawings[activeSlot].idxA);
         int yA = sc.RegionValueToYPixelCoordinate(pData->drawings[activeSlot].priceA, sc.GraphRegion);
         
-        // Dynamiczne określenie genu Punktu A: czy zamrożona cena była szczytem (High) danej świecy?
         int aIdx = pData->drawings[activeSlot].idxA;
         bool isAHigh = (pData->drawings[activeSlot].priceA == sc.High[aIdx]);
-        bool findBHigh = !isAHigh; // MATRYCA SYMETRII: Jeśli A to High -> B musi być Low. Jeśli A to Low -> B musi być High.
+        bool findBHigh = !isAHigh; 
 
-        // Przeliczenie pozycji podglądu B przez Snapping Engine (zbieżny z zakresem 2 barów)
         int cIdx = sc.ActiveToolIndex;
         int snappedBIdx = GetSnappedIndex(sc, cIdx, 2, findBHigh);
         float previewPriceB = findBHigh ? sc.High[snappedBIdx] : sc.Low[snappedBIdx];
 
-        // Konwersja zablokowanych współrzędnych knotów na fizyczne piksele monitora
         int previewX = sc.BarIndexToXPixelCoordinate(snappedBIdx);
         int previewY = sc.RegionValueToYPixelCoordinate(previewPriceB, sc.GraphRegion);
         
-        ::MoveToEx(hDC, xA, yA, NULL);
-        ::LineTo(hDC, previewX, previewY);
+        // ETAP 2: Usunięto GDI ::MoveToEx i ::LineTo dla ukośnej linii podglądu. Rysuje ją teraz natywna linia Sierry.
 
         // --- JAWNE UCHWYTY KOTWICY (Wzór 1:1 z natywnego rysunku Sierry) ---
-        HPEN hHandlePen = ::CreatePen(PS_SOLID, 2, RGB(0, 120, 255));   // Jasnoniebieski Electric Blue
-        HBRUSH hHandleBrush = (HBRUSH)::GetStockObject(WHITE_BRUSH);    // Opaque White Masking
+        HPEN hHandlePen = ::CreatePen(PS_SOLID, 2, RGB(0, 120, 255));   
+        HBRUSH hHandleBrush = (HBRUSH)::GetStockObject(WHITE_BRUSH);    
         
         HPEN hOldPenRes = (HPEN)::SelectObject(hDC, hHandlePen);
         HBRUSH hOldBrushRes = (HBRUSH)::SelectObject(hDC, hHandleBrush);
         
         ::Ellipse(hDC, xA - 4, yA - 4, xA + 5, yA + 5);
-        ::Ellipse(hDC, previewX - 4, previewY - 4, previewX + 5, previewY + 5); // Krążek podglądu idealnie zablokowany na knocie
+        ::Ellipse(hDC, previewX - 4, previewY - 4, previewX + 5, previewY + 5); 
         
         ::SelectObject(hDC, hOldBrushRes);
         ::SelectObject(hDC, hOldPenRes);
         ::DeleteObject(hHandlePen);
     }
 
-// 2. LOGIKA RENDEROWANIA ZAMROŻONYCH SIATEK - ITERACJA PO CAŁYM BUFORZE RAM
+// 2. LOGIKA RENDEROWANIA ZAMROŻONYCH SIATEK - ETAP 2 (Odczyt geometrii w locie z linii natywnej)
     int limit = min(pData->numSaved, 30);
     for (int k = 0; k < limit; k++) {
         SavedGrid& grid = pData->drawings[k];
-        if (grid.priceA == 0.0f || grid.priceB == 0.0f) continue;
-        if (grid.idxA >= sc.ArraySize || grid.idxB >= sc.ArraySize) continue;
+        if (grid.lineNumber == 0) continue; 
 
-        int xA = sc.BarIndexToXPixelCoordinate(grid.idxA);
-        int yA = sc.RegionValueToYPixelCoordinate(grid.priceA, sc.GraphRegion);
-        int xB = sc.BarIndexToXPixelCoordinate(grid.idxB);
-        int yB = sc.RegionValueToYPixelCoordinate(grid.priceB, sc.GraphRegion);
+        int drawIdxA = grid.idxA;
+        float drawPriceA = grid.priceA;
+        int drawIdxB = grid.idxB;
+        float drawPriceB = grid.priceB;
+        
+        float tmpCalcPrices[5];
+        for (int i = 0; i < 5; i++) tmpCalcPrices[i] = grid.calculatedPrices[i];
+
+        // Pobranie aktualnych współrzędnych z natywnej linii Sierry (Real-Time Follow podczas przesuwania)
+        s_UseTool ExistingLine;
+        if (sc.GetUserDrawingByLineNumber(sc.ChartNumber, grid.lineNumber, ExistingLine)) {
+            drawIdxA = ExistingLine.BeginIndex;
+            drawPriceA = ExistingLine.BeginValue;
+            drawIdxB = ExistingLine.EndIndex;
+            drawPriceB = ExistingLine.EndValue;
+
+            // Błyskawiczna rekalkulacja GDI dla płynnego podglądu przesuwania ramy
+            float ratios[5] = {0.000f, 0.382f, 0.500f, 0.618f, 1.000f};
+            for (int i = 0; i < 5; i++) {
+                tmpCalcPrices[i] = sc.RoundToTickSize(drawPriceA + ratios[i] * (drawPriceB - drawPriceA));
+            }
+        }
+
+        if (drawIdxA >= sc.ArraySize || drawIdxB >= sc.ArraySize) continue;
+
+        int xA = sc.BarIndexToXPixelCoordinate(drawIdxA);
+        int xB = sc.BarIndexToXPixelCoordinate(drawIdxB);
 
         int xLeft  = (xA < xB) ? xA : xB;
         int xRight = (xA > xB) ? xA : xB;
 
-        ::SelectObject(hDC, hDashPen);
-        ::MoveToEx(hDC, xA, yA, NULL);
-        ::LineTo(hDC, xB, yB);
+        // ETAP 2: Usunięto GDI ::MoveToEx i ::LineTo dla linii głównej (ukośnej). Rysuje ją Sierra.
 
-        ::SelectObject(hDC, hSolidPen);
-        ::SetBkMode(hDC, TRANSPARENT);
-        ::SetTextColor(hDC, RGB(255, 140, 0));
-        ::SetTextAlign(hDC, TA_NOUPDATECP); // Ochrona przed błędem TA_UPDATECP
-
-        const char* ratioStrings[5] = { "0", "0.382", "0.5", "0.618", "1" };
+::SetBkMode(hDC, TRANSPARENT);
+        ::SetTextAlign(hDC, TA_NOUPDATECP); 
 
         for (int i = 0; i < 5; i++) {
-            int yLevel = sc.RegionValueToYPixelCoordinate(grid.calculatedPrices[i], sc.GraphRegion);
+            if (!grid.customUse[i]) continue; // RESTRYKCJA ERGONOMII: Ukrywanie linii wyłączonych w Menu
+
+            int yLevel = sc.RegionValueToYPixelCoordinate(tmpCalcPrices[i], sc.GraphRegion);
             if (yLevel <= 0) continue;
+
+            // Dynamiczna kreacja i natychmiastowa utylizacja wielokolorowych piór GDI jądra Windows
+            HPEN hCustomPen = ::CreatePen(PS_SOLID, 1, grid.customColors[i]);
+            HPEN hOldCustomPen = (HPEN)::SelectObject(hDC, hCustomPen);
+            ::SetTextColor(hDC, grid.customColors[i]); // Synchronizacja koloru napisów z kolorem linii strefy
 
             ::MoveToEx(hDC, xLeft, yLevel, NULL);
             ::LineTo(hDC, xRight, yLevel);
 
-            // Inline Text & Split Formatting (Współrzędne pobierane z referencji siatki w pętli)
-            RECT rectLeft = { xLeft - 150, yLevel - 20, xLeft - 5, yLevel + 20 };
-            ::DrawTextA(hDC, ratioStrings[i], -1, &rectLeft, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
+            char ratioBuf[32];
+            sprintf(ratioBuf, "%g", grid.customRatios[i]); // Konwersja float na tekst w locie dla niestandardowych Ratio
 
-            SCString priceStr = sc.FormatGraphValue(grid.calculatedPrices[i], sc.BaseGraphValueFormat);
+            RECT rectLeft = { xLeft - 150, yLevel - 20, xLeft - 5, yLevel + 20 };
+            ::DrawTextA(hDC, ratioBuf, -1, &rectLeft, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
+
+            SCString priceStr = sc.FormatGraphValue(tmpCalcPrices[i], sc.BaseGraphValueFormat);
             RECT rectRight = { xRight + 5, yLevel - 20, xRight + 150, yLevel + 20 };
             ::DrawTextA(hDC, priceStr.GetChars(), -1, &rectRight, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
+
+            ::SelectObject(hDC, hOldCustomPen);
+            ::DeleteObject(hCustomPen);
+        }
+
+        // ETAP 2: Rysowanie krążków kontrolnych, gdy obiekt jest ZAZNACZONY lub PODNIESIONY do edycji
+        if (pData->SelectedIdx == k || pData->DraggingIdx == k) {
+            int yA = sc.RegionValueToYPixelCoordinate(drawPriceA, sc.GraphRegion);
+            int yB = sc.RegionValueToYPixelCoordinate(drawPriceB, sc.GraphRegion);
+
+            HPEN hHandlePen = ::CreatePen(PS_SOLID, 2, RGB(0, 120, 255));   // Electric Blue, grubość 2px
+            HBRUSH hHandleBrush = (HBRUSH)::GetStockObject(WHITE_BRUSH);    // Opaque White Masking
+            
+            HPEN hOldPenRes = (HPEN)::SelectObject(hDC, hHandlePen);
+            HBRUSH hOldBrushRes = (HBRUSH)::SelectObject(hDC, hHandleBrush);
+            
+            // Nałożenie punktów orientacyjnych na fizyczne końce modyfikowanej fali rynkowej
+            ::Ellipse(hDC, xA - 4, yA - 4, xA + 5, yA + 5);
+            ::Ellipse(hDC, xB - 4, yB - 4, xB + 5, yB + 5);
+            
+            ::SelectObject(hDC, hOldBrushRes);
+            ::SelectObject(hDC, hOldPenRes);
+            ::DeleteObject(hHandlePen);
         }
     }
+
+
+
+// Bezpieczne czyszczenie i uwalnianie uchwytów jądra Windows GDI (Zapobieganie GDI Leaks)
+
 
 
 
@@ -193,8 +391,8 @@ SCSFExport scsf_FibonacciGrid(SCStudyInterfaceRef sc) {
         sc.AutoLoop = 0; 
         sc.UpdateAlways = 1; 
 
-        sc.ReceivePointerEvents = ACS_RECEIVE_POINTER_EVENTS_WHEN_ACS_BUTTON_ENABLED; 
-        sc.ReceiveCharacterEvents = 1; 
+sc.ReceivePointerEvents = ACS_RECEIVE_POINTER_EVENTS_ALWAYS; // ETAP 2: Poprawny enum ACSIL dla stałej interakcji z obiektami RAM
+        sc.ReceiveCharacterEvents = 1;
 
 sc.p_GDIFunction = DrawFibonacciGDI; 
         sc.ScaleRangeType = SCALE_SAMEASREGION;   
@@ -209,16 +407,35 @@ sc.p_GDIFunction = DrawFibonacciGDI;
         return;
     }
 
-    // 2. ALOKACJA PAMIĘCI PERSISTENT POINTER
+// 2. ALOKACJA PAMIĘCI PERSISTENT POINTER Z AUTOMATYCZNYM ODCZYTEM Z PLIKU .DAT (ETAP 5 - FIX)
     FibonacciData* pData = (FibonacciData*)sc.GetPersistentPointer(500); 
 
-    if (pData == NULL) {
+if (pData == NULL) {
         pData = (FibonacciData*)sc.AllocateMemory(sizeof(FibonacciData));
         if (pData != NULL) {
             memset(pData, 0, sizeof(FibonacciData));
             sc.SetPersistentPointer(500, pData);
             pData->LastSize = -1;
             pData->TState = 0;
+            pData->DraggingIdx = -1; 
+            pData->DraggedPoint = 0;
+            pData->SelectedIdx = -1;  
+
+            // NAPRAWA: Dodano nawiasy () do sc.DataFilesFolder() przed wywołaniem GetChars()
+            char fn[512];
+            sprintf(fn, "%sFibGrid_%d_%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
+            FILE* f = fopen(fn, "rb");
+            if (f) {
+                fread(pData, sizeof(FibonacciData), 1, f);
+                fclose(f);
+                
+                // Sanacja i mrożenie stanów ulotnych jądra myszy po wciągnięciu płaskiego bloku bajtów RAM
+                pData->LastSize = -1;
+                pData->TState = 0;
+                pData->DraggingIdx = -1;
+                pData->DraggedPoint = 0;
+                pData->SelectedIdx = -1;
+            }
         }
     }
 
@@ -255,63 +472,289 @@ sc.p_GDIFunction = DrawFibonacciGDI;
         sc.CharacterEventCode = 0;
     }
 
-// 7. MASZYNA STANÓW MYSZY (UP-Based) Z MULTI-BUFOREM KOŁOWYM
-    if (!sc.DownloadingHistoricalData) {
-        if (sc.PointerEventType == SC_POINTER_BUTTON_UP && pData->TState > 0) {
-            int cIdx = sc.ActiveToolIndex;
-            float mY = (float)sc.ActiveToolYValue;
-            int snapRange = 2; 
-            int activeSlot = pData->numSaved % 30; // Zabezpieczenie: dynamiczny przydział slotu bufora
 
-            if (pData->TState == 1) {
-                bool isAHigh = (fabs(mY - sc.High[cIdx]) < fabs(mY - sc.Low[cIdx]));
-                int snappedAIdx = GetSnappedIndex(sc, cIdx, snapRange, isAHigh);
+// 7. SEKCJA INTERAKCJI MYSZY - DWUSTOPNIOWY MODEL SELEKCJI WEKTOROWEJ (SPINE SELECTION STANDARD)
+    if (!sc.DownloadingHistoricalData) {
+        int activeSlot = pData->numSaved % 30;
+        int cIdx = sc.ActiveToolIndex;
+        float mY = (float)sc.ActiveToolYValue;
+        int snapRange = 2;
+
+        // --- OBSŁUGA RUCHU MYSZY (Płynne śledzenie i rekalkulacja w RAM) ---
+        if (sc.PointerEventType == SC_POINTER_MOVE) {
+            if (pData->TState == 0 && pData->DraggingIdx != -1) {
+                int k = pData->DraggingIdx;
                 
-                pData->drawings[activeSlot].priceA = isAHigh ? sc.High[snappedAIdx] : sc.Low[snappedAIdx];
-                pData->drawings[activeSlot].timeA = sc.BaseDateTimeIn[snappedAIdx];
-                pData->drawings[activeSlot].idxA = snappedAIdx;
-                
-                pData->TState = 2; 
+                if (pData->DraggedPoint == 1) {
+                    bool isAHigh = (fabs(mY - sc.High[cIdx]) < fabs(mY - sc.Low[cIdx]));
+                    int snappedAIdx = GetSnappedIndex(sc, cIdx, snapRange, isAHigh);
+                    pData->drawings[k].idxA = snappedAIdx;
+                    pData->drawings[k].priceA = isAHigh ? sc.High[snappedAIdx] : sc.Low[snappedAIdx];
+                    pData->drawings[k].timeA = sc.BaseDateTimeIn[snappedAIdx];
+                }
+                else if (pData->DraggedPoint == 2) {
+                    int aIdx = pData->drawings[k].idxA;
+                    bool isAHigh = (pData->drawings[k].priceA == sc.High[aIdx]);
+                    bool findBHigh = !isAHigh;
+                    int snappedBIdx = GetSnappedIndex(sc, cIdx, snapRange, findBHigh);
+                    pData->drawings[k].idxB = snappedBIdx;
+                    pData->drawings[k].priceB = findBHigh ? sc.High[snappedBIdx] : sc.Low[snappedBIdx];
+                    pData->drawings[k].timeB = sc.BaseDateTimeIn[snappedBIdx];
+                }
+
+// Pancerne przeliczenie cen stref bezpośrednio w buforze RAM
+                float pA = pData->drawings[k].priceA;
+                float pB = pData->drawings[k].priceB;
+                for (int i = 0; i < 5; i++) {
+                    pData->drawings[k].calculatedPrices[i] = sc.RoundToTickSize(pA + pData->drawings[k].customRatios[i] * (pB - pA));
+                }
+
+
+                s_UseTool SpineLine;
+                SpineLine.Clear();
+                SpineLine.ChartNumber = sc.ChartNumber;
+                SpineLine.DrawingType = DRAWING_LINE;
+                SpineLine.LineNumber = pData->drawings[k].lineNumber;
+                SpineLine.AddMethod = UTAM_ADD_OR_ADJUST;
+                SpineLine.AddAsUserDrawnDrawing = 0; 
+                SpineLine.BeginIndex = pData->drawings[k].idxA;
+                SpineLine.BeginValue = pData->drawings[k].priceA;
+                SpineLine.EndIndex = pData->drawings[k].idxB;
+                SpineLine.EndValue = pData->drawings[k].priceB;
+                SpineLine.Color = RGB(128, 128, 128);
+                SpineLine.LineStyle = LINESTYLE_DASH;
+                SpineLine.LineWidth = 1;
+                sc.UseTool(SpineLine);
             }
-else if (pData->TState == 2) {
-                // Odczytanie genu startowego z zamrożonej struktury Punktu A
+            else if (pData->TState == 2) {
                 int aIdx = pData->drawings[activeSlot].idxA;
                 bool isAHigh = (pData->drawings[activeSlot].priceA == sc.High[aIdx]);
-                bool findBHigh = !isAHigh; // Wymuszenie rygoru: Punkt B bezwarunkowo przyjmuje przeciwległy knot fali
-                
-                int snappedBIdx = GetSnappedIndex(sc, cIdx, snapRange, findBHigh);
-                
-                pData->drawings[activeSlot].priceB = findBHigh ? sc.High[snappedBIdx] : sc.Low[snappedBIdx];
-                pData->drawings[activeSlot].timeB = sc.BaseDateTimeIn[snappedBIdx];
-                pData->drawings[activeSlot].idxB = snappedBIdx;
-                
-                // SILNIK MATEMATYCZNY - KIERUNEK WEKTORA (A = 0%, B = 100%)
-                float ratios[5] = {0.000f, 0.382f, 0.500f, 0.618f, 1.000f};
-                float pA = pData->drawings[activeSlot].priceA;
-                float pB = pData->drawings[activeSlot].priceB;
-                
-                for (int i = 0; i < 5; i++) {
-                    float rawPrice = pA + ratios[i] * (pB - pA);
-                    pData->drawings[activeSlot].calculatedPrices[i] = sc.RoundToTickSize(rawPrice);
-                }
-                
-                for (int i = 5; i < 10; i++) {
-                    pData->drawings[activeSlot].calculatedPrices[i] = 0.0f;
-                }
-                
-                pData->numSaved++; // Sukces: przesunięcie licznika globalnego (zamyka i zabezpiecza strukturę w RAM)
-                sc.SetCustomStudyControlBarButtonEnable(31, 0); 
-                pData->TState = 0;                             
+                bool findBHigh = !isAHigh;
+                int snappedBIdx = GetSnappedIndex(sc, cIdx, 2, findBHigh);
+                float previewPriceB = findBHigh ? sc.High[snappedBIdx] : sc.Low[snappedBIdx];
+
+                s_UseTool SpineLine;
+                SpineLine.Clear();
+                SpineLine.ChartNumber = sc.ChartNumber;
+                SpineLine.DrawingType = DRAWING_LINE;
+                SpineLine.LineNumber = pData->drawings[activeSlot].lineNumber;
+                SpineLine.AddMethod = UTAM_ADD_OR_ADJUST;
+                SpineLine.AddAsUserDrawnDrawing = 0; 
+                SpineLine.BeginIndex = pData->drawings[activeSlot].idxA;
+                SpineLine.BeginValue = pData->drawings[activeSlot].priceA;
+                SpineLine.EndIndex = snappedBIdx;
+                SpineLine.EndValue = previewPriceB;
+                SpineLine.Color = RGB(128, 128, 128);
+                SpineLine.LineStyle = LINESTYLE_DASH;
+                SpineLine.LineWidth = 1;
+                sc.UseTool(SpineLine);
             }
         }
-    }
 
-    // --- PULS BIENIA SERCA (Wymuszenie odświeżenia klatek GDI przy ruchu myszy) ---
-    if (pData->TState > 0 && sc.PointerEventType == SC_POINTER_MOVE) {
-        // Przypisanie dynamicznej wartości ceny do subgrafu alarmuje jądro Sierry.
-        // Platforma natychmiast wywołuje zdarzenie przerysowania okna graficznego (GDI).
+        // --- MANIPULACJA STRUKTURĄ (Pancerny Interfejs Zdarzenia UP) ---
+        else if (sc.PointerEventType == SC_POINTER_BUTTON_UP) {
+            if (pData->TState == 0) {
+                // KROK 1: Jeśli punkt jest w powietrzu -> Kliknięcie go "upuszcza" (Drop / Freeze)
+                if (pData->DraggingIdx != -1) {
+                    pData->DraggingIdx = -1;
+                    pData->DraggedPoint = 0;
+                }
+                // KROK 2: Analiza kliknięć interakcyjnych w spoczynku
+                else {
+                    int mouseX = sc.PointerHorzWindowCoord;
+                    int mouseY = sc.PointerVertWindowCoord;
+                    bool hitHandle = false;
+
+                    // PODKROK A: Jeśli jakiś obiekt jest już ZAZNACZONY, sprawdzamy kliknięcie w jego węzły
+                    if (pData->SelectedIdx != -1) {
+                        int k = pData->SelectedIdx;
+                        int xA = sc.BarIndexToXPixelCoordinate(pData->drawings[k].idxA);
+                        int yA = sc.RegionValueToYPixelCoordinate(pData->drawings[k].priceA, sc.GraphRegion);
+                        int xB = sc.BarIndexToXPixelCoordinate(pData->drawings[k].idxB);
+                        int yB = sc.RegionValueToYPixelCoordinate(pData->drawings[k].priceB, sc.GraphRegion);
+
+                        if (abs(mouseX - xA) <= 14 && abs(mouseY - yA) <= 14) {
+                            pData->DraggingIdx = k;
+                            pData->DraggedPoint = 1;
+                            hitHandle = true;
+                        }
+                        else if (abs(mouseX - xB) <= 14 && abs(mouseY - yB) <= 14) {
+                            pData->DraggingIdx = k;
+                            pData->DraggedPoint = 2;
+                            hitHandle = true;
+                        }
+                    }
+
+                    // PODKROK B: Jeśli nie trafiono w węzeł zaznaczonego rysunku -> Matematyczny Hit-Test linii grzbietu (Spine)
+                    if (!hitHandle) {
+                        int limit = min(pData->numSaved, 30);
+                        int newSelectedIdx = -1;
+
+                        for (int k = 0; k < limit; k++) {
+                            if (pData->drawings[k].lineNumber == 0) continue;
+
+                            int xA = sc.BarIndexToXPixelCoordinate(pData->drawings[k].idxA);
+                            int yA = sc.RegionValueToYPixelCoordinate(pData->drawings[k].priceA, sc.GraphRegion);
+                            int xB = sc.BarIndexToXPixelCoordinate(pData->drawings[k].idxB);
+                            int yB = sc.RegionValueToYPixelCoordinate(pData->drawings[k].priceB, sc.GraphRegion);
+
+                            // Zaawansowana geometria wektorowa: rzut prostopadły kursora na segment linii kotwicy
+                            double abX = xB - xA;
+                            double abY = yB - yA;
+                            double amX = mouseX - xA;
+                            double amY = mouseY - yA;
+                            double abLenSq = abX * abX + abY * abY;
+                            double t = 0.0;
+                            
+                            if (abLenSq > 0.0) {
+                                t = (amX * abX + amY * abY) / abLenSq;
+                                if (t < 0.0) t = 0.0;
+                                if (t > 1.0) t = 1.0;
+                            }
+                            
+                            double cx = xA + t * abX;
+                            double cy = yA + t * abY;
+                            double dist = sqrt((mouseX - cx) * (mouseX - cx) + (mouseY - cy) * (mouseY - cy));
+
+                            if (dist <= 10.0) { // Margines tolerancji trafienia w linię siatki = 10 pikseli
+                                newSelectedIdx = k;
+                                break;
+                            }
+                        }
+
+
+// ASYNCHRONICZNY EMULATOR DWUKLIKU NA GRZBIECIE (SPINE QUICK EDIT HOOK)
+                        unsigned int currentClickTime = ::GetTickCount();
+                        if (newSelectedIdx != -1 && pData->SelectedIdx == newSelectedIdx && (currentClickTime - pData->LastClickTime <= 300)) {
+                            // Wywołanie autorskiego okna modalnego Win32 skompilowanego bezpośrednio wewnątrz DLL
+                            ShowModalConfig((HWND)sc.ChartWindowHandle, pData->drawings[newSelectedIdx]);
+                            
+                            // Wymuszenie natychmiastowej rekalkulacji ramy cenowej Fibo po zamknięciu okna dialogowego
+                            float pA = pData->drawings[newSelectedIdx].priceA;
+                            float pB = pData->drawings[newSelectedIdx].priceB;
+                            for (int i = 0; i < 5; i++) {
+                                pData->drawings[newSelectedIdx].calculatedPrices[i] = sc.RoundToTickSize(pA + pData->drawings[newSelectedIdx].customRatios[i] * (pB - pA));
+                            }
+                            
+                            // NAPRAWA: Korekta wywołania sc.DataFilesFolder() z nawiasami
+                            char fn[512];
+                            sprintf(fn, "%sFibGrid_%d_%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
+                            FILE* f = fopen(fn, "wb");
+                            if (f) {
+                                fwrite(pData, sizeof(FibonacciData), 1, f);
+                                fclose(f);
+                            }
+
+                            // ETAP 5: Wymuszenie natychmiastowego bicia serca (Repaint Trigger) w ułamku sekundy zamknięcia menu
+                            sc.Subgraph[0][sc.ArraySize - 1] = (float)sc.ActiveToolYValue + 0.001f;
+
+                            // ETAP 4: Zerowanie rejestru czasu chroni przed błędem powtórnej iniekcji okna przy wielokrotnych kliknięciach
+                            currentClickTime = 0;
+                        }
+                        pData->LastClickTime = currentClickTime;
+
+                        pData->SelectedIdx = newSelectedIdx;
+                    }
+                }
+            }
+            else if (pData->TState > 0) {
+                if (pData->TState == 1) {
+                    bool isAHigh = (fabs(mY - sc.High[cIdx]) < fabs(mY - sc.Low[cIdx]));
+                    int snappedAIdx = GetSnappedIndex(sc, cIdx, snapRange, isAHigh);
+                    
+                    pData->drawings[activeSlot].priceA = isAHigh ? sc.High[snappedAIdx] : sc.Low[snappedAIdx];
+                    pData->drawings[activeSlot].timeA = sc.BaseDateTimeIn[snappedAIdx];
+                    pData->drawings[activeSlot].idxA = snappedAIdx;
+
+                    // ETAP 3: Inicjalizacja domyślnych kolorów i współczynników z Trade Navigatora dla nowej fali
+                    float defaultRatios[5] = {0.000f, 0.382f, 0.500f, 0.618f, 1.000f};
+                    COLORREF defaultColors[5] = {RGB(0, 0, 255), RGB(255, 0, 0), RGB(0, 0, 0), RGB(255, 0, 0), RGB(0, 0, 255)}; 
+                    for (int i = 0; i < 5; i++) {
+                        pData->drawings[activeSlot].customRatios[i] = defaultRatios[i];
+                        pData->drawings[activeSlot].customColors[i] = defaultColors[i];
+                        // NAPRAWA: Usunięto wadliwą linię pData->customUse[i] = 1; (była przyczyną błędu struct)
+                        pData->drawings[activeSlot].customUse[i] = 1;
+                    }
+
+                    s_UseTool SpineLine;
+                    SpineLine.Clear();
+                    SpineLine.ChartNumber = sc.ChartNumber;
+                    SpineLine.DrawingType = DRAWING_LINE;
+                    SpineLine.AddMethod = UTAM_ADD_OR_ADJUST;
+                    SpineLine.AddAsUserDrawnDrawing = 0; 
+                    SpineLine.BeginIndex = snappedAIdx;
+                    SpineLine.BeginValue = pData->drawings[activeSlot].priceA;
+                    SpineLine.EndIndex = snappedAIdx;
+                    SpineLine.EndValue = pData->drawings[activeSlot].priceA;
+                    SpineLine.Color = RGB(128, 128, 128);
+                    SpineLine.LineStyle = LINESTYLE_DASH;
+                    SpineLine.LineWidth = 1;
+                    sc.UseTool(SpineLine);
+
+                    pData->drawings[activeSlot].lineNumber = SpineLine.LineNumber; 
+                    pData->TState = 2; 
+                }
+                else if (pData->TState == 2) {
+                    int aIdx = pData->drawings[activeSlot].idxA;
+                    bool isAHigh = (pData->drawings[activeSlot].priceA == sc.High[aIdx]);
+                    bool findBHigh = !isAHigh;
+                    
+                    int snappedBIdx = GetSnappedIndex(sc, cIdx, snapRange, findBHigh);
+                    
+                    pData->drawings[activeSlot].priceB = findBHigh ? sc.High[snappedBIdx] : sc.Low[snappedBIdx];
+                    pData->drawings[activeSlot].timeB = sc.BaseDateTimeIn[snappedBIdx];
+                    pData->drawings[activeSlot].idxB = snappedBIdx;
+                    
+                    s_UseTool SpineLine;
+                    SpineLine.Clear();
+                    SpineLine.ChartNumber = sc.ChartNumber;
+                    SpineLine.DrawingType = DRAWING_LINE;
+                    SpineLine.LineNumber = pData->drawings[activeSlot].lineNumber;
+                    SpineLine.AddMethod = UTAM_ADD_OR_ADJUST;
+                    SpineLine.AddAsUserDrawnDrawing = 0; 
+                    SpineLine.BeginIndex = pData->drawings[activeSlot].idxA;
+                    SpineLine.BeginValue = pData->drawings[activeSlot].priceA;
+                    SpineLine.EndIndex = snappedBIdx;
+                    SpineLine.EndValue = pData->drawings[activeSlot].priceB;
+                    SpineLine.Color = RGB(128, 128, 128);
+                    SpineLine.LineStyle = LINESTYLE_DASH;
+                    SpineLine.LineWidth = 1;
+                    sc.UseTool(SpineLine);
+                    
+                    float pA = pData->drawings[activeSlot].priceA;
+                    float pB = pData->drawings[activeSlot].priceB;
+                    
+                    for (int i = 0; i < 5; i++) {
+                        float rawPrice = pA + pData->drawings[activeSlot].customRatios[i] * (pB - pA);
+                        pData->drawings[activeSlot].calculatedPrices[i] = sc.RoundToTickSize(rawPrice);
+                    }
+                    for (int i = 5; i < 10; i++) {
+                        pData->drawings[activeSlot].calculatedPrices[i] = 0.0f;
+                    }
+                    
+                    pData->numSaved++; 
+
+                    // NAPRAWA: Korekta wywołania sc.DataFilesFolder() z nawiasami
+                    char fn[512];
+                    sprintf(fn, "%sFibGrid_%d_%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
+                    FILE* f = fopen(fn, "wb");
+                    if (f) {
+                        fwrite(pData, sizeof(FibonacciData), 1, f);
+                        fclose(f);
+                    }
+
+                    sc.SetCustomStudyControlBarButtonEnable(31, 0); 
+                    pData->TState = 0;                             
+                }
+            }
+        }
+
+
+    // --- AUTOMATYCZNY AMORTYZATOR I BIENIE SERCA REFRESHERA (Wymuszenie klatek GDI Offline) ---
+    if ((pData->TState > 0 || pData->DraggingIdx != -1) && sc.PointerEventType == SC_POINTER_MOVE) {
         sc.Subgraph[0][sc.ArraySize - 1] = (float)sc.ActiveToolYValue;
     }
+
 
 // 8. OBSŁUGA ZMIANY INTERWAŁÓW / REKALKULACJI (Wielobiektowy Timeframe Search Engine)
     if (pData->LastSize == -1 || sc.IsFullRecalculation) { 
@@ -333,16 +776,16 @@ else if (pData->TState == 2) {
                     pData->drawings[k].idxB = newIdxB;
                 }
 
-                // Automatyczne przeliczenie cen stref dla nowych indeksów czasowych
-                float ratios[5] = {0.000f, 0.382f, 0.500f, 0.618f, 1.000f};
+// Automatyczne przeliczenie cen stref dla nowych indeksów czasowych z zachowaniem struktury profilu
                 float pA = pData->drawings[k].priceA;
                 float pB = pData->drawings[k].priceB;
                 
                 for (int i = 0; i < 5; i++) {
-                    float rawPrice = pA + ratios[i] * (pB - pA);
+                    float rawPrice = pA + pData->drawings[k].customRatios[i] * (pB - pA);
                     pData->drawings[k].calculatedPrices[i] = sc.RoundToTickSize(rawPrice);
                 }
             }
         }
     }
+}
 }
