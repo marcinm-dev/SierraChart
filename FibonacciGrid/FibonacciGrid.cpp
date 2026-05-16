@@ -2,11 +2,11 @@
 #include <windows.h>
 #include <cmath>
 
-SCDLLName("FibonacciRetracement")
+SCDLLName("FibonacciGrid")
 
 // --- BEZPIECZEŃSTWO BINARNE: Płaska struktura modelu A-B ---
 #pragma pack(push, 1)
-struct SavedRetracement {
+struct SavedGrid {
     float priceA;
     float priceB;
     SCDateTime timeA;
@@ -17,7 +17,8 @@ struct SavedRetracement {
 };
 
 struct FibonacciData {
-    SavedRetracement drawing;
+    SavedGrid drawings[30]; // ROZSZERZENIE: Płaski bufor binarnego zapisu do 30 siatek jednocześnie
+    int numSaved;           // Globalny licznik monitorujący całkowitą liczbę stworzonych rysunków
     int TState;
     int LastSize;
 };
@@ -77,105 +78,117 @@ void DrawFibonacciGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
     FibonacciData* pData = (FibonacciData*)sc.GetPersistentPointer(500);
     if (!pData) return;
 
-    // Zabezpieczenie: Jeśli brak aktywnego rysowania i brak zapisanego rysunku - wychodzimy
-    if (pData->TState == 0 && (pData->drawing.priceA == 0.0f || pData->drawing.priceB == 0.0f)) return;
-
-    // Kapsułkowanie zasobów GDI - Tworzenie systemowych piór graficznych Windows
-    HPEN hDashPen = ::CreatePen(PS_DASH, 1, RGB(128, 128, 128));  // Przerywane dla kotwicy i podglądu
+// Kapsułkowanie zasobów GDI - Tworzenie systemowych piór graficznych Windows
+HPEN hDashPen = ::CreatePen(PS_DASH, 1, RGB(128, 128, 128));  // Przerywane dla kotwicy i podglądu
     HPEN hSolidPen = ::CreatePen(PS_SOLID, 1, RGB(255, 140, 0)); // Ciągłe pomarańczowe dla stref siatki
     HPEN hOldPen = (HPEN)::SelectObject(hDC, hDashPen);
 
-    // Dynamiczne pobranie współrzędnych myszy w pikselach
-    int mouseX = sc.BarIndexToXPixelCoordinate(sc.ActiveToolIndex);
-    int mouseY = sc.RegionValueToYPixelCoordinate((float)sc.ActiveToolYValue, sc.GraphRegion);
+    // Wdrożona prawidłowo, pojedyncza systemowa czcionka Arial Bold 8
+    HFONT hFont = ::CreateFontA(12, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, 
+                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, 
+                                DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
+    HFONT hOldFont = (HFONT)::SelectObject(hDC, hFont); // Wstrzyknięcie czcionki do potoku renderera Windows
 
-// 1. LOGIKA LIVE PREVIEW (Podgląd w locie)
+
+// Matematyczne wyznaczenie indeksu aktualnie rysowanego obiektu w maszynie stanów
+    int activeSlot = pData->numSaved % 30;
+
+// 1. LOGIKA LIVE PREVIEW (Inteligentne, wymuszone przyciąganie horyzontalno-pionowe w locie)
     if (pData->TState == 2) {
-        // Stan 2: Punkt A zatrzaśnięty, szukamy punktu B - ciągniemy przerywaną linię ukośną od A do myszy
-        int xA = sc.BarIndexToXPixelCoordinate(pData->drawing.idxA);
-        int yA = sc.RegionValueToYPixelCoordinate(pData->drawing.priceA, sc.GraphRegion);
+        int xA = sc.BarIndexToXPixelCoordinate(pData->drawings[activeSlot].idxA);
+        int yA = sc.RegionValueToYPixelCoordinate(pData->drawings[activeSlot].priceA, sc.GraphRegion);
+        
+        // Dynamiczne określenie genu Punktu A: czy zamrożona cena była szczytem (High) danej świecy?
+        int aIdx = pData->drawings[activeSlot].idxA;
+        bool isAHigh = (pData->drawings[activeSlot].priceA == sc.High[aIdx]);
+        bool findBHigh = !isAHigh; // MATRYCA SYMETRII: Jeśli A to High -> B musi być Low. Jeśli A to Low -> B musi być High.
+
+        // Przeliczenie pozycji podglądu B przez Snapping Engine (zbieżny z zakresem 2 barów)
+        int cIdx = sc.ActiveToolIndex;
+        int snappedBIdx = GetSnappedIndex(sc, cIdx, 2, findBHigh);
+        float previewPriceB = findBHigh ? sc.High[snappedBIdx] : sc.Low[snappedBIdx];
+
+        // Konwersja zablokowanych współrzędnych knotów na fizyczne piksele monitora
+        int previewX = sc.BarIndexToXPixelCoordinate(snappedBIdx);
+        int previewY = sc.RegionValueToYPixelCoordinate(previewPriceB, sc.GraphRegion);
         
         ::MoveToEx(hDC, xA, yA, NULL);
-        ::LineTo(hDC, mouseX, mouseY);
+        ::LineTo(hDC, previewX, previewY);
 
         // --- JAWNE UCHWYTY KOTWICY (Wzór 1:1 z natywnego rysunku Sierry) ---
-        HPEN hHandlePen = ::CreatePen(PS_SOLID, 2, RGB(0, 120, 255));   // Jasnoniebieski (Electric Blue), grubość 2px
-        HBRUSH hHandleBrush = (HBRUSH)::GetStockObject(WHITE_BRUSH);    // Wymuszenie białego wypełnienia środka okręgu
+        HPEN hHandlePen = ::CreatePen(PS_SOLID, 2, RGB(0, 120, 255));   // Jasnoniebieski Electric Blue
+        HBRUSH hHandleBrush = (HBRUSH)::GetStockObject(WHITE_BRUSH);    // Opaque White Masking
         
         HPEN hOldPenRes = (HPEN)::SelectObject(hDC, hHandlePen);
         HBRUSH hOldBrushRes = (HBRUSH)::SelectObject(hDC, hHandleBrush);
         
-        // [UCHWYT A] Rysowanie krążka o średnicy 9 pikseli wokół zamrożonego Punktu A
         ::Ellipse(hDC, xA - 4, yA - 4, xA + 5, yA + 5);
+        ::Ellipse(hDC, previewX - 4, previewY - 4, previewX + 5, previewY + 5); // Krążek podglądu idealnie zablokowany na knocie
         
-        // [UCHWYT B - PREVIEW] Rysowanie identycznego krążka podążającego płynnie za pozycją myszy
-        ::Ellipse(hDC, mouseX - 4, mouseY - 4, mouseX + 5, mouseY + 5);
-        
-        // Przywrócenie pierwotnego stanu kontekstu graficznego i czyszczenie pamięci Win32
         ::SelectObject(hDC, hOldBrushRes);
         ::SelectObject(hDC, hOldPenRes);
         ::DeleteObject(hHandlePen);
     }
 
-// 2. LOGIKA RENDEROWANIA ZAMROŻONEJ SIATKI - PANCERNY RESET FLAG RENDERERA GDI
-    if (pData->drawing.priceA > 0.0f && pData->drawing.priceB > 0.0f) {
-        int xA = sc.BarIndexToXPixelCoordinate(pData->drawing.idxA);
-        int yA = sc.RegionValueToYPixelCoordinate(pData->drawing.priceA, sc.GraphRegion);
-        int xB = sc.BarIndexToXPixelCoordinate(pData->drawing.idxB);
-        int yB = sc.RegionValueToYPixelCoordinate(pData->drawing.priceB, sc.GraphRegion);
+// 2. LOGIKA RENDEROWANIA ZAMROŻONYCH SIATEK - ITERACJA PO CAŁYM BUFORZE RAM
+    int limit = min(pData->numSaved, 30);
+    for (int k = 0; k < limit; k++) {
+        SavedGrid& grid = pData->drawings[k];
+        if (grid.priceA == 0.0f || grid.priceB == 0.0f) continue;
+        if (grid.idxA >= sc.ArraySize || grid.idxB >= sc.ArraySize) continue;
 
-        // Bezwzględna normalizacja krawędzi horyzontalnych ramy siatki
+        int xA = sc.BarIndexToXPixelCoordinate(grid.idxA);
+        int yA = sc.RegionValueToYPixelCoordinate(grid.priceA, sc.GraphRegion);
+        int xB = sc.BarIndexToXPixelCoordinate(grid.idxB);
+        int yB = sc.RegionValueToYPixelCoordinate(grid.priceB, sc.GraphRegion);
+
         int xLeft  = (xA < xB) ? xA : xB;
         int xRight = (xA > xB) ? xA : xB;
 
-        // Rysowanie dyskretnej ukośnej linii kotwicy łączącej realne punkty ekstremów A i B
         ::SelectObject(hDC, hDashPen);
         ::MoveToEx(hDC, xA, yA, NULL);
         ::LineTo(hDC, xB, yB);
 
-        // Przełączenie parametrów na rysowanie stref i tekstu poziomego
         ::SelectObject(hDC, hSolidPen);
         ::SetBkMode(hDC, TRANSPARENT);
         ::SetTextColor(hDC, RGB(255, 140, 0));
-        
-        // FORTYFIKACJA GDI: Wymuszenie wyłączenia aktualizacji pozycji kursora (Zabójca błędu TA_UPDATECP)
-        ::SetTextAlign(hDC, TA_NOUPDATECP); 
+        ::SetTextAlign(hDC, TA_NOUPDATECP); // Ochrona przed błędem TA_UPDATECP
 
         const char* ratioStrings[5] = { "0", "0.382", "0.5", "0.618", "1" };
 
         for (int i = 0; i < 5; i++) {
-            int yLevel = sc.RegionValueToYPixelCoordinate(pData->drawing.calculatedPrices[i], sc.GraphRegion);
+            int yLevel = sc.RegionValueToYPixelCoordinate(grid.calculatedPrices[i], sc.GraphRegion);
             if (yLevel <= 0) continue;
 
-            // Linia pozioma rozciąga się rygorystycznie od bezwzględnej lewej do bezwzględnej prawej osi X
             ::MoveToEx(hDC, xLeft, yLevel, NULL);
             ::LineTo(hDC, xRight, yLevel);
 
-            // Inline Text & Split Formatting: Budujemy wirtualne prostokąty RECT oparte o znormalizowane xLeft i xRight
-            // Lewa strona (Współczynnik przyklejony od zewnątrz do absolutnego początku linii z lewej, wyrównany do prawej)
+            // Inline Text & Split Formatting (Współrzędne pobierane z referencji siatki w pętli)
             RECT rectLeft = { xLeft - 150, yLevel - 20, xLeft - 5, yLevel + 20 };
             ::DrawTextA(hDC, ratioStrings[i], -1, &rectLeft, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
 
-            // Prawa strona (Precyzyjna cena rynkowa startująca zaraz po absolutnym zakończeniu linii z prawej, wyrównana do lewej)
-            SCString priceStr = sc.FormatGraphValue(pData->drawing.calculatedPrices[i], sc.BaseGraphValueFormat);
+            SCString priceStr = sc.FormatGraphValue(grid.calculatedPrices[i], sc.BaseGraphValueFormat);
             RECT rectRight = { xRight + 5, yLevel - 20, xRight + 150, yLevel + 20 };
             ::DrawTextA(hDC, priceStr.GetChars(), -1, &rectRight, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
         }
     }
 
 
-    // Bezpieczne czyszczenie i uwalnianie uchwytów jądra Windows GDI (Zapobieganie GDI Leaks)
+
+// Bezpieczne czyszczenie i uwalnianie uchwytów jądra Windows GDI (Zapobieganie GDI Leaks)
     ::SelectObject(hDC, hOldPen);
+    ::SelectObject(hDC, hOldFont); // Przywrócenie domyślnej czcionki platformy Sierra Chart
     ::DeleteObject(hDashPen);
     ::DeleteObject(hSolidPen);
+    ::DeleteObject(hFont);         // BEZPIECZEŃSTWO: Fizyczne usunięcie czcionki z jądra OS Windows
 }
 
 // --- GŁÓWNA FUNKCJA WSKAŹNIKA ---
-SCSFExport scsf_FibonacciRetracement(SCStudyInterfaceRef sc) {
+SCSFExport scsf_FibonacciGrid(SCStudyInterfaceRef sc) {
     
     // 1. SEKCJA KONFIGURACJI DOMYŚLNEJ
     if (sc.SetDefaults) {
-        sc.GraphName = "Fibonacci Retracement ";
+        sc.GraphName = "Fibonacci Grid ";
         sc.GraphRegion = 0; 
         sc.AutoLoop = 0; 
         sc.UpdateAlways = 1; 
@@ -242,50 +255,54 @@ sc.p_GDIFunction = DrawFibonacciGDI;
         sc.CharacterEventCode = 0;
     }
 
-    // 7. MASZYNA STANÓW MYSZY (UP-Based) Z SILNIKIEM MATEMATYCZNYM
+// 7. MASZYNA STANÓW MYSZY (UP-Based) Z MULTI-BUFOREM KOŁOWYM
     if (!sc.DownloadingHistoricalData) {
         if (sc.PointerEventType == SC_POINTER_BUTTON_UP && pData->TState > 0) {
             int cIdx = sc.ActiveToolIndex;
             float mY = (float)sc.ActiveToolYValue;
             int snapRange = 2; 
+            int activeSlot = pData->numSaved % 30; // Zabezpieczenie: dynamiczny przydział slotu bufora
 
             if (pData->TState == 1) {
                 bool isAHigh = (fabs(mY - sc.High[cIdx]) < fabs(mY - sc.Low[cIdx]));
                 int snappedAIdx = GetSnappedIndex(sc, cIdx, snapRange, isAHigh);
                 
-                pData->drawing.priceA = isAHigh ? sc.High[snappedAIdx] : sc.Low[snappedAIdx];
-                pData->drawing.timeA = sc.BaseDateTimeIn[snappedAIdx];
-                pData->drawing.idxA = snappedAIdx;
+                pData->drawings[activeSlot].priceA = isAHigh ? sc.High[snappedAIdx] : sc.Low[snappedAIdx];
+                pData->drawings[activeSlot].timeA = sc.BaseDateTimeIn[snappedAIdx];
+                pData->drawings[activeSlot].idxA = snappedAIdx;
                 
                 pData->TState = 2; 
             }
-            else if (pData->TState == 2) {
-                bool isBHigh = (fabs(mY - sc.High[cIdx]) < fabs(mY - sc.Low[cIdx]));
-                int snappedBIdx = GetSnappedIndex(sc, cIdx, snapRange, isBHigh);
+else if (pData->TState == 2) {
+                // Odczytanie genu startowego z zamrożonej struktury Punktu A
+                int aIdx = pData->drawings[activeSlot].idxA;
+                bool isAHigh = (pData->drawings[activeSlot].priceA == sc.High[aIdx]);
+                bool findBHigh = !isAHigh; // Wymuszenie rygoru: Punkt B bezwarunkowo przyjmuje przeciwległy knot fali
                 
-                pData->drawing.priceB = isBHigh ? sc.High[snappedBIdx] : sc.Low[snappedBIdx];
-                pData->drawing.timeB = sc.BaseDateTimeIn[snappedBIdx];
-                pData->drawing.idxB = snappedBIdx;
+                int snappedBIdx = GetSnappedIndex(sc, cIdx, snapRange, findBHigh);
                 
-// SILNIK MATEMATYCZNY (Wywołanie z Etapu 4) - ODWROTNY KIERUNEK (A = 0%, B = 100%)
+                pData->drawings[activeSlot].priceB = findBHigh ? sc.High[snappedBIdx] : sc.Low[snappedBIdx];
+                pData->drawings[activeSlot].timeB = sc.BaseDateTimeIn[snappedBIdx];
+                pData->drawings[activeSlot].idxB = snappedBIdx;
+                
+                // SILNIK MATEMATYCZNY - KIERUNEK WEKTORA (A = 0%, B = 100%)
                 float ratios[5] = {0.000f, 0.382f, 0.500f, 0.618f, 1.000f};
-                float pA = pData->drawing.priceA;
-                float pB = pData->drawing.priceB;
+                float pA = pData->drawings[activeSlot].priceA;
+                float pB = pData->drawings[activeSlot].priceB;
                 
                 for (int i = 0; i < 5; i++) {
                     float rawPrice = pA + ratios[i] * (pB - pA);
-                    pData->drawing.calculatedPrices[i] = sc.RoundToTickSize(rawPrice);
+                    pData->drawings[activeSlot].calculatedPrices[i] = sc.RoundToTickSize(rawPrice);
                 }
                 
                 for (int i = 5; i < 10; i++) {
-                    pData->drawing.calculatedPrices[i] = 0.0f;
+                    pData->drawings[activeSlot].calculatedPrices[i] = 0.0f;
                 }
                 
+                pData->numSaved++; // Sukces: przesunięcie licznika globalnego (zamyka i zabezpiecza strukturę w RAM)
                 sc.SetCustomStudyControlBarButtonEnable(31, 0); 
                 pData->TState = 0;                             
             }
-            
-sc.PointerEventType = 0;
         }
     }
 
@@ -296,8 +313,36 @@ sc.PointerEventType = 0;
         sc.Subgraph[0][sc.ArraySize - 1] = (float)sc.ActiveToolYValue;
     }
 
-    // 8. OBSŁUGA ZMIANY INTERWAŁÓW / REKULKULACJI
+// 8. OBSŁUGA ZMIANY INTERWAŁÓW / REKALKULACJI (Wielobiektowy Timeframe Search Engine)
     if (pData->LastSize == -1 || sc.IsFullRecalculation) { 
         pData->LastSize = sc.ArraySize;
+
+        int limit = min(pData->numSaved, 30);
+        for (int k = 0; k < limit; k++) {
+            if (pData->drawings[k].priceA > 0.0f && pData->drawings[k].priceB > 0.0f) {
+                
+                // 1. Dopasowanie indeksu Punktu A po unikalnej kotwicy czasu (DateTime)
+                int newIdxA = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, pData->drawings[k].timeA);
+                if (newIdxA >= 0 && newIdxA < sc.ArraySize) {
+                    pData->drawings[k].idxA = newIdxA;
+                }
+
+                // 2. Dopasowanie indeksu Punktu B po unikalnej kotwicy czasu (DateTime)
+                int newIdxB = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, pData->drawings[k].timeB);
+                if (newIdxB >= 0 && newIdxB < sc.ArraySize) {
+                    pData->drawings[k].idxB = newIdxB;
+                }
+
+                // Automatyczne przeliczenie cen stref dla nowych indeksów czasowych
+                float ratios[5] = {0.000f, 0.382f, 0.500f, 0.618f, 1.000f};
+                float pA = pData->drawings[k].priceA;
+                float pB = pData->drawings[k].priceB;
+                
+                for (int i = 0; i < 5; i++) {
+                    float rawPrice = pA + ratios[i] * (pB - pA);
+                    pData->drawings[k].calculatedPrices[i] = sc.RoundToTickSize(rawPrice);
+                }
+            }
+        }
     }
 }
