@@ -1,0 +1,9 @@
+# FibonacciGrid
+
+FibonacciGrid draws a grid of up to 10 Fibonacci levels between two swing points picked with the mouse. Point A is 0 % and point B is 100 %, so bullish and bearish swings use the same formula. Each drawing keeps its own levels (use, ratio, colour and line width), which can be edited in a settings window opened by double-clicking the dotted line between the two points. Four presets are chosen with the FIB 1 to FIB 4 Control Bar buttons, LAST DEL and ALL DEL remove drawings, and the grids can be hidden together with a Master study.
+
+## Versions
+
+Versions are git tags: `fibonaccigrid-v3`.
+
+- **V3**: Base functionality: two-point Fibonacci grid.
