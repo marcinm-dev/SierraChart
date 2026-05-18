@@ -5,6 +5,9 @@
 SCDLLName("FibonacciGrid")
 
 // --- BEZPIECZEŃSTWO BINARNE: Płaska struktura fali z indywidualnymi parametrami stref ---
+// --- STAŁE ARCHITEKTONICZNE SYNCHRONIZACJI ---
+const int GLOBAL_SYNC_SLOT = 9999;
+
 #pragma pack(push, 1)
 struct SavedGrid {
     float priceA;
@@ -29,6 +32,10 @@ struct FibonacciData {
     int DraggedPoint;       
     int SelectedIdx;        
     unsigned int LastClickTime; // ETAP 3: Rejestr czasu dla asynchronicznego emulatora dwukliku
+    
+    // --- ETAP 1 HIDE: Rejestry magistrali synchronizacji i osłony GPU ---
+    int LastSyncValue;          // Zapamiętany poprzedni stan ukrycia (detekcja zmiany impulsu)
+    int StabCounter;            // Licznik klatek amortyzacji GPU dla bezpiecznego redrawu
 };
 #pragma pack(pop)
 
@@ -240,6 +247,10 @@ void DrawFibonacciGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
     FibonacciData* pData = (FibonacciData*)sc.GetPersistentPointer(500);
     if (!pData) return;
 
+    // --- ETAP 4 HIDE: Tarcza Wydajnościowa GDI (Odcięcie potoku GPU ze Slotu 5) ---
+    bool effectiveIsVisible = (sc.GetPersistentInt(5) == 1);
+    if (!effectiveIsVisible) return;
+
 // Kapsułkowanie zasobów GDI - Tworzenie systemowych piór graficznych Windows
 HPEN hDashPen = ::CreatePen(PS_DASH, 1, RGB(128, 128, 128));  // Przerywane dla kotwicy i podglądu
     HPEN hSolidPen = ::CreatePen(PS_SOLID, 1, RGB(255, 140, 0)); // Ciągłe pomarańczowe dla stref siatki
@@ -437,6 +448,13 @@ sc.p_GDIFunction = DrawFibonacciGDI;
         sc.Input[2].Name = "Control Bar Button ID - All Delete";
         sc.Input[2].SetInt(36);
 
+        // --- ETAP 2 HIDE: Konfiguracja wejść integracyjnych dla trybu Slave ---
+        sc.Input[3].Name = "Sync z Master HIDE (Button 20)";
+        sc.Input[3].SetYesNo(1);
+
+        sc.Input[4].Name = "Master Hide Button ID";
+        sc.Input[4].SetInt(20);
+
         // Nadanie nazw przyciskom na pasku na podstawie dynamicznych wartości z menu ustawień
         sc.SetCustomStudyControlBarButtonText(sc.Input[0].GetInt(), "FIB RETR"); 
         sc.SetCustomStudyControlBarButtonText(sc.Input[1].GetInt(), "LAST DEL"); 
@@ -492,8 +510,31 @@ if (pData == NULL) return;
     int DrawBtn    = sc.Input[0].GetInt();
     int LastDelBtn = sc.Input[1].GetInt();
     int AllDelBtn  = sc.Input[2].GetInt();
+    int HideBtn    = sc.Input[4].GetInt(); // ETAP 3 HIDE: Mapowanie przycisku ukrywania
+
+    // --- ETAP 3 HIDE: Most decyzyjny i osłona GPU (Slave Mode) ---
+    if (sc.IsFullRecalculation) {
+        pData->StabCounter = 10; // Amortyzacja na zimnym starcie
+    }
+
+    int currentGlobalHide = sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT);
+    bool isSyncImpulse = (sc.Input[3].GetYesNo() && sc.MenuEventID == HideBtn);
+    
+    bool effectiveIsVisible = (currentGlobalHide == 0);
+    if (isSyncImpulse) {
+        pData->StabCounter = 10;  // Stabilizacja klatek przy przełączaniu
+        pData->LastSize = -1;     // Wymuszenie otwarcia bramki redrawu
+        if (currentGlobalHide == pData->LastSyncValue) {
+            effectiveIsVisible = !effectiveIsVisible;
+            pData->LastSyncValue = effectiveIsVisible ? 0 : 1; 
+        }
+    }
+
+    // Most decyzyjny (Single Source of Truth) dla silnika GDI - Rejestracja w Slocie 5
+    sc.SetPersistentInt(5, effectiveIsVisible ? 1 : 0);
 
 // 5. POPRAWIONY HANDSHAKE PASKA I POINTER PROXY (Wzorzec z DiNapoli)
+
     if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == DrawBtn) {
         pData->TState = 1; 
         
@@ -892,35 +933,73 @@ float pA = pData->drawings[activeSlot].priceA;
 
 
 // 8. OBSŁUGA ZMIANY INTERWAŁÓW / REKALKULACJI (Wielobiektowy Timeframe Search Engine)
-    if (pData->LastSize == -1 || sc.IsFullRecalculation) { 
-        pData->LastSize = sc.ArraySize;
+    bool effectiveIsVisible = (sc.GetPersistentInt(5) == 1);
 
-        int limit = min(pData->numSaved, 30);
-        for (int k = 0; k < limit; k++) {
-            if (pData->drawings[k].priceA > 0.0f && pData->drawings[k].priceB > 0.0f) {
-                
-                // 1. Dopasowanie indeksu Punktu A po unikalnej kotwicy czasu (DateTime)
-                int newIdxA = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, pData->drawings[k].timeA);
-                if (newIdxA >= 0 && newIdxA < sc.ArraySize) {
-                    pData->drawings[k].idxA = newIdxA;
-                }
+    if (effectiveIsVisible) {
+        // Jeśli podsystem wybudza się ze stanu ukrycia (-2), wymuszamy twarde otwarcie bramki obliczeniowej
+        if (pData->LastSize == -2) {
+            pData->LastSize = -1;
+        }
 
-                // 2. Dopasowanie indeksu Punktu B po unikalnej kotwicy czasu (DateTime)
-                int newIdxB = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, pData->drawings[k].timeB);
-                if (newIdxB >= 0 && newIdxB < sc.ArraySize) {
-                    pData->drawings[k].idxB = newIdxB;
-                }
+        if (pData->LastSize == -1 || sc.IsFullRecalculation || pData->StabCounter > 0) { 
+            pData->LastSize = sc.ArraySize;
 
-// Automatyczne przeliczenie cen stref dla nowych indeksów czasowych dla wszystkich 10 poziomów
-                float pA = pData->drawings[k].priceA;
-                float pB = pData->drawings[k].priceB;
-                
-                for (int i = 0; i < 10; i++) {
-                    float rawPrice = pA + pData->drawings[k].customRatios[i] * (pB - pA);
-                    pData->drawings[k].calculatedPrices[i] = sc.RoundToTickSize(rawPrice);
+            int limit = min(pData->numSaved, 30);
+            for (int k = 0; k < limit; k++) {
+                if (pData->drawings[k].priceA > 0.0f && pData->drawings[k].priceB > 0.0f) {
+                    
+                    // 1. Dopasowanie indeksu Punktu A po unikalnej kotwicy czasu (DateTime)
+                    int newIdxA = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, pData->drawings[k].timeA);
+                    if (newIdxA >= 0 && newIdxA < sc.ArraySize) {
+                        pData->drawings[k].idxA = newIdxA;
+                    }
+
+                    // 2. Dopasowanie indeksu Punktu B po unikalnej kotwicy czasu (DateTime)
+                    int newIdxB = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, pData->drawings[k].timeB);
+                    if (newIdxB >= 0 && newIdxB < sc.ArraySize) {
+                        pData->drawings[k].idxB = newIdxB;
+                    }
+
+                    // Automatyczne przeliczenie cen stref dla nowych indeksów czasowych dla wszystkich 10 poziomów
+                    float pA = pData->drawings[k].priceA;
+                    float pB = pData->drawings[k].priceB;
+                    
+                    for (int i = 0; i < 10; i++) {
+                        float rawPrice = pA + pData->drawings[k].customRatios[i] * (pB - pA);
+                        pData->drawings[k].calculatedPrices[i] = sc.RoundToTickSize(rawPrice);
+                    }
+
+                    // Rekonstrukcja obiektów natywnych po przywróceniu widoczności lub zmianie interwału
+                    s_UseTool SpineLine;
+                    SpineLine.Clear();
+                    SpineLine.ChartNumber = sc.ChartNumber;
+                    SpineLine.DrawingType = DRAWING_LINE;
+                    SpineLine.LineNumber = pData->drawings[k].lineNumber;
+                    SpineLine.AddMethod = UTAM_ADD_OR_ADJUST;
+                    SpineLine.AddAsUserDrawnDrawing = 0; 
+                    SpineLine.BeginIndex = pData->drawings[k].idxA;
+                    SpineLine.BeginValue = pData->drawings[k].priceA;
+                    SpineLine.EndIndex = pData->drawings[k].idxB;
+                    SpineLine.EndValue = pData->drawings[k].priceB;
+                    SpineLine.Color = RGB(128, 128, 128);
+                    SpineLine.LineStyle = LINESTYLE_DASH;
+                    SpineLine.LineWidth = 1;
+                    sc.UseTool(SpineLine);
                 }
             }
         }
+        if (pData->StabCounter > 0) pData->StabCounter--;
+    } 
+else if (!effectiveIsVisible && pData->LastSize != -2) {
+        // Masowa utylizacja linii pomocniczych hosta w ułamku sekundy wygaszenia widoczności
+        int limit = min(pData->numSaved, 30);
+        for (int k = 0; k < limit; k++) {
+            if (pData->drawings[k].lineNumber != 0) {
+                sc.DeleteACSChartDrawing(sc.ChartNumber, 0, pData->drawings[k].lineNumber);
+            }
+        }
+        pData->LastSize = -2; // Aktywacja State -2 Guard: pętla wykona się dokładnie raz (ochrona CPU)
+        pData->LastSyncValue = currentGlobalHide; // UNIFIKACJA SLAVE: Wyrównanie cache pamięci podręcznej do szyny globalnej
     }
 }
 }
