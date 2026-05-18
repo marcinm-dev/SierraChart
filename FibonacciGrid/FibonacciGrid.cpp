@@ -252,7 +252,7 @@ void DrawFibonacciGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
     if (!effectiveIsVisible) return;
 
 // Kapsułkowanie zasobów GDI - Tworzenie systemowych piór graficznych Windows
-HPEN hDashPen = ::CreatePen(PS_DASH, 1, RGB(128, 128, 128));  // Przerywane dla kotwicy i podglądu
+HPEN hDashPen = ::CreatePen(PS_DOT, 1, RGB(0, 0, 255));  // Kropkowane (Blue) dla kotwicy i podglądu
     HPEN hSolidPen = ::CreatePen(PS_SOLID, 1, RGB(255, 140, 0)); // Ciągłe pomarańczowe dla stref siatki
     HPEN hOldPen = (HPEN)::SelectObject(hDC, hDashPen);
 
@@ -358,9 +358,12 @@ float tmpCalcPrices[10];
             int yLevel = sc.RegionValueToYPixelCoordinate(tmpCalcPrices[i], sc.GraphRegion);
             if (yLevel <= 0) continue;
 
-            // Dynamiczna kreacja i natychmiastowa utylizacja wielokolorowych piór GDI jądra Windows
-            HPEN hCustomPen = ::CreatePen(PS_SOLID, 1, grid.customColors[i]);
-            HPEN hOldCustomPen = (HPEN)::SelectObject(hDC, hCustomPen);
+// Dynamiczne wyznaczenie grubości (poziomy bazowe 0.000 i 1.000 otrzymują grubość 2, reszta 1)
+int currentLineWidth = (i == 0 || i == 9) ? 2 : 1;
+
+// Dynamiczna kreacja i natychmiastowa utylizacja wielokolorowych piór GDI jądra Windows
+HPEN hCustomPen = ::CreatePen(PS_SOLID, currentLineWidth, grid.customColors[i]);
+HPEN hOldCustomPen = (HPEN)::SelectObject(hDC, hCustomPen);
             ::SetTextColor(hDC, grid.customColors[i]); // Synchronizacja koloru napisów z kolorem linii strefy
 
             ::MoveToEx(hDC, xLeft, yLevel, NULL);
@@ -690,8 +693,8 @@ char fn[512];
                 SpineLine.BeginValue = pData->drawings[k].priceA;
                 SpineLine.EndIndex = pData->drawings[k].idxB;
                 SpineLine.EndValue = pData->drawings[k].priceB;
-                SpineLine.Color = RGB(128, 128, 128);
-                SpineLine.LineStyle = LINESTYLE_DASH;
+SpineLine.Color = RGB(0, 0, 255);
+SpineLine.LineStyle = LINESTYLE_DOT;
                 SpineLine.LineWidth = 1;
                 sc.UseTool(SpineLine);
             }
@@ -713,8 +716,8 @@ char fn[512];
                 SpineLine.BeginValue = pData->drawings[activeSlot].priceA;
                 SpineLine.EndIndex = snappedBIdx;
                 SpineLine.EndValue = previewPriceB;
-                SpineLine.Color = RGB(128, 128, 128);
-                SpineLine.LineStyle = LINESTYLE_DASH;
+SpineLine.Color = RGB(0, 0, 255);
+SpineLine.LineStyle = LINESTYLE_DOT;
                 SpineLine.LineWidth = 1;
                 sc.UseTool(SpineLine);
             }
@@ -849,11 +852,14 @@ char fn[512];
                         RGB(128, 128, 128),// 0.886: Grey
                         RGB(0, 0, 255)    // 1: Blue
                     };
-                    for (int i = 0; i < 10; i++) {
-                        pData->drawings[activeSlot].customRatios[i] = defaultRatios[i];
-                        pData->drawings[activeSlot].customColors[i] = defaultColors[i];
-                        pData->drawings[activeSlot].customUse[i] = 1;
-                    }
+// Matryca widoczności: indeksy 1 (0.25), 2 (0.382) oraz 3 (0.5) otrzymują stan 0 (wyłączone)
+int defaultUse[10] = { 1, 0, 0, 0, 1, 1, 1, 0, 1, 1 };
+
+for (int i = 0; i < 10; i++) {
+    pData->drawings[activeSlot].customRatios[i] = defaultRatios[i];
+    pData->drawings[activeSlot].customColors[i] = defaultColors[i];
+    pData->drawings[activeSlot].customUse[i] = defaultUse[i];
+}
 
                     s_UseTool SpineLine;
                     SpineLine.Clear();
@@ -865,8 +871,8 @@ char fn[512];
                     SpineLine.BeginValue = pData->drawings[activeSlot].priceA;
                     SpineLine.EndIndex = snappedAIdx;
                     SpineLine.EndValue = pData->drawings[activeSlot].priceA;
-                    SpineLine.Color = RGB(128, 128, 128);
-                    SpineLine.LineStyle = LINESTYLE_DASH;
+SpineLine.Color = RGB(0, 0, 255);
+SpineLine.LineStyle = LINESTYLE_DOT;
                     SpineLine.LineWidth = 1;
                     sc.UseTool(SpineLine);
 
@@ -895,8 +901,8 @@ char fn[512];
                     SpineLine.BeginValue = pData->drawings[activeSlot].priceA;
                     SpineLine.EndIndex = snappedBIdx;
                     SpineLine.EndValue = pData->drawings[activeSlot].priceB;
-                    SpineLine.Color = RGB(128, 128, 128);
-                    SpineLine.LineStyle = LINESTYLE_DASH;
+SpineLine.Color = RGB(0, 0, 255);
+SpineLine.LineStyle = LINESTYLE_DOT;
                     SpineLine.LineWidth = 1;
                     sc.UseTool(SpineLine);
                     
@@ -981,8 +987,8 @@ float pA = pData->drawings[activeSlot].priceA;
                     SpineLine.BeginValue = pData->drawings[k].priceA;
                     SpineLine.EndIndex = pData->drawings[k].idxB;
                     SpineLine.EndValue = pData->drawings[k].priceB;
-                    SpineLine.Color = RGB(128, 128, 128);
-                    SpineLine.LineStyle = LINESTYLE_DASH;
+SpineLine.Color = RGB(0, 0, 255);
+SpineLine.LineStyle = LINESTYLE_DOT;
                     SpineLine.LineWidth = 1;
                     sc.UseTool(SpineLine);
                 }

@@ -4,7 +4,7 @@ FibonacciGrid draws a grid of up to 10 Fibonacci levels between two swing points
 
 ## Versions
 
-Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5`, `fibonaccigrid-v6`, `fibonaccigrid-v7`, `fibonaccigrid-v8`.
+Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5`, `fibonaccigrid-v6`, `fibonaccigrid-v7`, `fibonaccigrid-v8`, `fibonaccigrid-v9`.
 
 - **V3**: Base functionality: two-point Fibonacci grid.
 - **V4**: Wick snapping, buffer of several drawings and font fix.
@@ -12,3 +12,4 @@ Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5
 - **V6**: Settings window fixes and reading the native spine line.
 - **V7**: LAST DEL and ALL DEL buttons.
 - **V8**: HIDE synchronisation with a Master study (global slot 9999, GPU safe-lock).
+- **V9**: Dotted spine line and thicker border levels (0.000 and 1.000).
