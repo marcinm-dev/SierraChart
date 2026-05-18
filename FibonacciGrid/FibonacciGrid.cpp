@@ -427,8 +427,20 @@ sc.p_GDIFunction = DrawFibonacciGDI;
         sc.Subgraph[0].Name = "Heartbeat";
         sc.Subgraph[0].DrawStyle = DRAWSTYLE_HIDDEN; // Ukryty, nie generuje linii ani napisów
 
-        // INTEGRACJA Z CONTROL BAR (PRZYCISK 31) - Konfiguracja jednorazowa
-        sc.SetCustomStudyControlBarButtonText(31, "FIB RETR"); 
+// INTEGRACJA Z CONTROL BAR - Konfiguracja wejść dla przycisków (Elastyczność UI)
+        sc.Input[0].Name = "Control Bar Button ID - Draw Tool";
+        sc.Input[0].SetInt(31);
+
+        sc.Input[1].Name = "Control Bar Button ID - Last Delete";
+        sc.Input[1].SetInt(35);
+
+        sc.Input[2].Name = "Control Bar Button ID - All Delete";
+        sc.Input[2].SetInt(36);
+
+        // Nadanie nazw przyciskom na pasku na podstawie dynamicznych wartości z menu ustawień
+        sc.SetCustomStudyControlBarButtonText(sc.Input[0].GetInt(), "FIB RETR"); 
+        sc.SetCustomStudyControlBarButtonText(sc.Input[1].GetInt(), "LAST DEL"); 
+        sc.SetCustomStudyControlBarButtonText(sc.Input[2].GetInt(), "ALL DEL"); 
 
         return;
     }
@@ -474,12 +486,15 @@ if (pData == NULL) {
         return;
     }
 
-    if (pData == NULL) return;
+if (pData == NULL) return;
 
-
+    // DYNAMICZNE MAPOWANIE PRZYCISKÓW Z MENU USTAWIEN (sc.Input) - Likwidacja sztywnych literałów
+    int DrawBtn    = sc.Input[0].GetInt();
+    int LastDelBtn = sc.Input[1].GetInt();
+    int AllDelBtn  = sc.Input[2].GetInt();
 
 // 5. POPRAWIONY HANDSHAKE PASKA I POINTER PROXY (Wzorzec z DiNapoli)
-    if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == 31) {
+    if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == DrawBtn) {
         pData->TState = 1; 
         
         HWND hRoot = ::GetAncestor((HWND)sc.ChartWindowHandle, GA_ROOT);
@@ -491,13 +506,100 @@ if (pData == NULL) {
         }
     }
 
-    // 6. ASYNCHRONICZNY HAMULEC BEZPIECZEŃSTWA
+// 6. ASYNCHRONICZNY HAMULEC BEZPIECZEŃSTWA Z PEŁNĄ SANACJĄ OBIEKTÓW OSIEROCONYCH
     if (sc.CharacterEventCode == 32 && pData->TState > 0) {
-        pData->TState = 0;
-        sc.SetCustomStudyControlBarButtonEnable(31, 0);
-        sc.CharacterEventCode = 0;
-    }
+        // Namierzamy slot, który właśnie próbowaliśmy rysować
+        int activeSlot = pData->numSaved % 30;
 
+        // Jeśli zdążył wygenerować linię w Sierrze, bezwzględnie ją wycinamy
+        if (pData->drawings[activeSlot].lineNumber != 0) {
+            sc.DeleteACSChartDrawing(sc.ChartNumber, 0, pData->drawings[activeSlot].lineNumber);
+        }
+
+        // Czyszczenie niedokończonych rekordów geometrycznych w strukturze RAM
+        memset(&pData->drawings[activeSlot], 0, sizeof(SavedGrid));
+
+        // Reset parametrów jądra sterowania
+        pData->TState = 0;
+        sc.SetCustomStudyControlBarButtonEnable(DrawBtn, 0);
+        sc.CharacterEventCode = 0;
+
+        // WYMUSZENIE NATYCHMIASTOWEGO REPAINTU OFFLINE: Linia zniknie w ułamku milisekundy
+        sc.Subgraph[0][sc.ArraySize - 1] = (float)sc.ActiveToolYValue + 0.001f;
+    }
+	
+	
+    // OBSŁUGA PRZYCISKU LAST DEL (ETAP 2)
+    if (sc.MenuEventID == LastDelBtn) {
+        if (pData->numSaved > 0) {
+            // Kalkulacja indeksu wejściowego w płaskim buforze kołowym
+            int lastIdx = (pData->numSaved - 1) % 30;
+            
+            // Utylizacja przerywanej linii grzbietu z rejestrów platformy Sierra Chart
+            if (pData->drawings[lastIdx].lineNumber != 0) {
+                sc.DeleteACSChartDrawing(sc.ChartNumber, 0, pData->drawings[lastIdx].lineNumber);
+            }
+            
+            // Sanacja komórki RAM - czyszczenie bajtowe struktury do stanu zerowego
+            memset(&pData->drawings[lastIdx], 0, sizeof(SavedGrid));
+            
+// Dekrementacja licznika i bezwzględny reset menedżera selekcji
+            pData->numSaved--;
+            pData->SelectedIdx = -1;
+            
+            // ZAPIS ZMIAN NA DYSK - STRUMIEŃ BINARNY (ETAP 4)
+char fn[512];
+            sprintf(fn, "%sFibGrid_%d_%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
+            FILE* f = fopen(fn, "wb");
+            if (f) {
+                fwrite(pData, sizeof(FibonacciData), 1, f);
+                fclose(f);
+            }
+            
+            // WYMUSZENIE NATYCHMIASTOWEGO REPAINTU OFFLINE (ETAP 5)
+            sc.Subgraph[0][sc.ArraySize - 1] = (float)sc.ActiveToolYValue + 0.001f;
+        }
+        // Wyłączenie podświetlenia przycisku i natychmiastowe zwolnienie magistrali zdarzeń (Gasić sygnał)
+        sc.SetCustomStudyControlBarButtonEnable(LastDelBtn, 0);
+            sc.MenuEventID = 0;
+        }
+
+    // OBSŁUGA PRZYCISKU ALL DEL (ETAP 3)
+    if (sc.MenuEventID == AllDelBtn) {
+        // Pętla masowej utylizacji linii grzbietu z rejestrów platformy Sierra Chart
+        int limit = min(pData->numSaved, 30);
+        for (int k = 0; k < limit; k++) {
+            if (pData->drawings[k].lineNumber != 0) {
+                sc.DeleteACSChartDrawing(sc.ChartNumber, 0, pData->drawings[k].lineNumber);
+            }
+        }
+
+        // Atomowy reset całego bufora tablicowego rysunków w pamięci RAM
+        memset(pData->drawings, 0, sizeof(pData->drawings));
+
+        // Przywrócenie stanów spoczynkowych i fabrycznych parametrów jądra wskaźnika
+        pData->numSaved = 0;
+        pData->TState = 0;
+        pData->DraggingIdx = -1;
+        pData->DraggedPoint = 0;
+pData->SelectedIdx = -1;
+
+        // ZAPIS ZMIAN NA DYSK - STRUMIEŃ BINARNY (ETAP 4)
+char fn[512];
+        sprintf(fn, "%sFibGrid_%d_%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
+        FILE* f = fopen(fn, "wb");
+        if (f) {
+            fwrite(pData, sizeof(FibonacciData), 1, f);
+            fclose(f);
+        }
+
+        // WYMUSZENIE NATYCHMIASTOWEGO REPAINTU OFFLINE (ETAP 5)
+        sc.Subgraph[0][sc.ArraySize - 1] = (float)sc.ActiveToolYValue + 0.001f;
+
+        // Wyłączenie podświetlenia przycisku i natychmiastowe zwolnienie magistrali (Gasić sygnał)
+        sc.SetCustomStudyControlBarButtonEnable(AllDelBtn, 0);
+        sc.MenuEventID = 0;
+    }
 
 // 7. SEKCJA INTERAKCJI MYSZY - DWUSTOPNIOWY MODEL SELEKCJI WEKTOROWEJ (SPINE SELECTION STANDARD)
     if (!sc.DownloadingHistoricalData) {
@@ -767,7 +869,7 @@ float pA = pData->drawings[activeSlot].priceA;
                     
                     pData->numSaved++; 
 
-                    // NAPRAWA: Korekta wywołania sc.DataFilesFolder() z nawiasami
+// NAPRAWA: Korekta wywołania sc.DataFilesFolder() z nawiasami
                     char fn[512];
                     sprintf(fn, "%sFibGrid_%d_%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
                     FILE* f = fopen(fn, "wb");
@@ -776,7 +878,7 @@ float pA = pData->drawings[activeSlot].priceA;
                         fclose(f);
                     }
 
-                    sc.SetCustomStudyControlBarButtonEnable(31, 0); 
+                    sc.SetCustomStudyControlBarButtonEnable(DrawBtn, 0); 
                     pData->TState = 0;                             
                 }
             }
