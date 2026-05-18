@@ -4,8 +4,9 @@ FibonacciGrid draws a grid of up to 10 Fibonacci levels between two swing points
 
 ## Versions
 
-Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5`.
+Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5`, `fibonaccigrid-v6`.
 
 - **V3**: Base functionality: two-point Fibonacci grid.
 - **V4**: Wick snapping, buffer of several drawings and font fix.
 - **V5**: Working prototype with a Win32 settings window and .dat persistence.
+- **V6**: Settings window fixes and reading the native spine line.

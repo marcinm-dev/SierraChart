@@ -15,9 +15,9 @@ struct SavedGrid {
     int idxB;
     float calculatedPrices[10];
     int lineNumber;           
-    float customRatios[5];    // ETAP 3: Indywidualne współczynniki rynkowe poziomu
-    COLORREF customColors[5]; // ETAP 3: Indywidualne kolory linii i napisów GDI
-    int customUse[5];         // ETAP 3: Status widoczności (0 = Ukryta, 1 = Aktywna)
+float customRatios[10];    // ETAP 3: Tablica rozszerzona do 10 stref
+    COLORREF customColors[10]; // ETAP 3: Tablica rozszerzona do 10 stref
+    int customUse[10];         // ETAP 3: Tablica rozszerzona do 10 stref
 };
 
 struct FibonacciData {
@@ -86,39 +86,35 @@ LRESULT CALLBACK ModalConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
     SavedGrid* pGrid = (SavedGrid*)GetWindowLongPtrA(hWnd, GWLP_USERDATA);
 
     switch (message) {
-    case WM_CREATE: {
+
+case WM_CREATE: {
         CREATESTRUCTA* pCreate = (CREATESTRUCTA*)lParam;
         pGrid = (SavedGrid*)pCreate->lpCreateParams;
         SetWindowLongPtrA(hWnd, GWLP_USERDATA, (LONG_PTR)pGrid);
 
-        // Generowanie tabeli kontrolerów dla 5 testowych poziomów
-        for (int i = 0; i < 5; i++) {
-            // Kolumna 1: Checkbox widoczności "Use" (Poprawne rzutowanie HMENU eliminuje warningi kompilacji 64-bit)
-            HWND hCheck = ::CreateWindowA("BUTTON", "", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 25 + i * 35, 20, 20, hWnd, (HMENU)(UINT_PTR)(100 + i), NULL, NULL);
+// Kompaktowa matryca rozmieszczenia kontrolek dla 10 poziomów (Bez przycisku tekstowego)
+        for (int i = 0; i < 10; i++) {
+            HWND hCheck = ::CreateWindowA("BUTTON", "", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 15 + i * 25, 20, 20, hWnd, (HMENU)(UINT_PTR)(100 + i), NULL, NULL);
             SendMessageA(hCheck, BM_SETCHECK, pGrid->customUse[i] ? BST_CHECKED : BST_UNCHECKED, 0);
 
-            // Kolumna 2: Pole edycji współczynnika "Ratio"
             char buf[32];
             sprintf(buf, "%g", pGrid->customRatios[i]);
-            ::CreateWindowA("EDIT", buf, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 50, 25 + i * 35, 60, 20, hWnd, (HMENU)(UINT_PTR)(200 + i), NULL, NULL);
-
-            // Kolumna 3: Przycisk otwierający okno palety
-            ::CreateWindowA("BUTTON", "Color...", WS_CHILD | WS_VISIBLE, 125, 25 + i * 35, 65, 20, hWnd, (HMENU)(UINT_PTR)(300 + i), NULL, NULL);
+            ::CreateWindowA("EDIT", buf, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 50, 15 + i * 25, 60, 20, hWnd, (HMENU)(UINT_PTR)(200 + i), NULL, NULL);
         }
 
-        // Przyciski akcji na dole okna dialogowego
-        ::CreateWindowA("BUTTON", "OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 40, 220, 80, 25, hWnd, (HMENU)(UINT_PTR)IDOK, NULL, NULL);
-        ::CreateWindowA("BUTTON", "Cancel", WS_CHILD | WS_VISIBLE, 140, 220, 80, 25, hWnd, (HMENU)(UINT_PTR)IDCANCEL, NULL, NULL);
+        // Przyciski przeniesione na dół zaktualizowanego formularza (y = 280)
+        ::CreateWindowA("BUTTON", "OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 40, 280, 80, 25, hWnd, (HMENU)(UINT_PTR)IDOK, NULL, NULL);
+        ::CreateWindowA("BUTTON", "Cancel", WS_CHILD | WS_VISIBLE, 140, 280, 80, 25, hWnd, (HMENU)(UINT_PTR)IDCANCEL, NULL, NULL);
         break;
     }
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = ::BeginPaint(hWnd, &ps);
         if (pGrid) {
-            // Kolumna 4: Dynamiczne rysowanie próbek kwadratów koloru poziomu (Wzór Trade Navigatora)
-            for (int i = 0; i < 5; i++) {
+            // Próbki kwadratów koloru dla wszystkich 10 stref
+            for (int i = 0; i < 10; i++) {
                 HBRUSH hBrush = ::CreateSolidBrush(pGrid->customColors[i]);
-                RECT r = { 205, 25 + i * 35, 235, 25 + i * 35 + 20 };
+                RECT r = { 205, 15 + i * 25, 235, 15 + i * 25 + 20 };
                 ::FillRect(hdc, &r, hBrush);
                 ::DeleteObject(hBrush);
             }
@@ -126,37 +122,53 @@ LRESULT CALLBACK ModalConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
         ::EndPaint(hWnd, &ps);
         break;
     }
+
+case WM_LBUTTONDOWN: {
+        if (!pGrid) break;
+        int mouseX = LOWORD(lParam);
+        int mouseY = HIWORD(lParam);
+
+        // Hit-Testing: Sprawdzamy czy kursor znajduje się w horyzontalnych granicach kolumny kwadratów (X: 205 do 235)
+        if (mouseX >= 205 && mouseX <= 235) {
+            for (int i = 0; i < 10; i++) {
+                int yTop = 15 + i * 25;
+                int yBottom = yTop + 20;
+
+                // Sprawdzamy pionowy przedział dla każdego z 10 poziomów
+                if (mouseY >= yTop && mouseY <= yBottom) {
+                    CHOOSECOLORA cc;
+                    static COLORREF acrCustClr[16];
+                    ZeroMemory(&cc, sizeof(cc));
+                    cc.lStructSize = sizeof(cc);
+                    cc.hwndOwner = hWnd;
+                    cc.lpCustColors = (LPDWORD)acrCustClr;
+                    cc.rgbResult = pGrid->customColors[i];
+                    cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+
+                    // Pancerne wywołanie palety systemowej przez LoadLibrary (Fortyfikacja Linkera Sierry)
+                    HMODULE hComDlg = ::LoadLibraryA("comdlg32.dll");
+                    if (hComDlg) {
+                        typedef BOOL (WINAPI* LPFNCHOOSECOLORA)(CHOOSECOLORA*);
+                        LPFNCHOOSECOLORA pChooseColorA = (LPFNCHOOSECOLORA)::GetProcAddress(hComDlg, "ChooseColorA");
+                        if (pChooseColorA && pChooseColorA(&cc)) {
+                            pGrid->customColors[i] = cc.rgbResult;
+                            ::InvalidateRect(hWnd, NULL, TRUE); // Wymuszenie komunikatu WM_PAINT dla odświeżenia próbki koloru
+                        }
+                        ::FreeLibrary(hComDlg);
+                    }
+                    break; // Cel osiągnięty, przerywamy skanowanie pionowe
+                }
+            }
+        }
+        break;
+    }
     case WM_COMMAND: {
         if (!pGrid) return ::DefWindowProcA(hWnd, message, wParam, lParam);
         int wmId = LOWORD(wParam);
 
-        // Przechwycenie kliknięcia w przycisk zmiany koloru danej strefy
-        if (wmId >= 300 && wmId < 305) {
-            int idx = wmId - 300;
-            CHOOSECOLORA cc;
-            static COLORREF acrCustClr[16];
-            ZeroMemory(&cc, sizeof(cc));
-            cc.lStructSize = sizeof(cc);
-            cc.hwndOwner = hWnd;
-            cc.lpCustColors = (LPDWORD)acrCustClr;
-            cc.rgbResult = pGrid->customColors[idx];
-            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-
-            // FORTYFIKACJA LINKERA: Dynamiczne załadowanie biblioteki comdlg32.dll w locie z jądra OS Windows
-            HMODULE hComDlg = ::LoadLibraryA("comdlg32.dll");
-            if (hComDlg) {
-                typedef BOOL (WINAPI* LPFNCHOOSECOLORA)(CHOOSECOLORA*);
-                LPFNCHOOSECOLORA pChooseColorA = (LPFNCHOOSECOLORA)::GetProcAddress(hComDlg, "ChooseColorA");
-                if (pChooseColorA && pChooseColorA(&cc)) {
-                    pGrid->customColors[idx] = cc.rgbResult;
-                    ::InvalidateRect(hWnd, NULL, TRUE); // Natychmiastowe odświeżenie kwadratu próbki koloru
-                }
-                ::FreeLibrary(hComDlg);
-            }
-        }
-        else if (wmId == IDOK) {
-            // Zatwierdzenie i przepisanie wprowadzonych wartości do pamięci RAM
-            for (int i = 0; i < 5; i++) {
+        if (wmId == IDOK) {
+            // Zrzucenie 10 rekordów z kontrolek Win32 do bufora RAM
+            for (int i = 0; i < 10; i++) {
                 HWND hCheck = ::GetDlgItem(hWnd, 100 + i);
                 pGrid->customUse[i] = (::SendMessageA(hCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
 
@@ -172,6 +184,8 @@ LRESULT CALLBACK ModalConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
         }
         break;
     }
+
+
 case WM_DESTROY:
         // NAPRAWA ETAPU 4: Usunięto PostQuitMessage(0) - to ono bezprawnie pożerało wątek główny jądra Sierra Chart!
         break;
@@ -191,8 +205,8 @@ void ShowModalConfig(HWND hParent, SavedGrid& grid) {
     wc.lpszClassName = "FibGridConfigClass";
     ::RegisterClassA(&wc);
 
-    HWND hwndDlg = ::CreateWindowExA(WS_EX_DLGMODALFRAME, "FibGridConfigClass", "Properties (1 Profile / 5 Levels)", 
-        WS_POPUPWINDOW | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 265, 300, hParent, NULL, wc.hInstance, &grid);
+HWND hwndDlg = ::CreateWindowExA(WS_EX_DLGMODALFRAME, "FibGridConfigClass", "Properties (1 Profile / 10 Levels)", 
+        WS_POPUPWINDOW | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 265, 355, hParent, NULL, wc.hInstance, &grid);
 
     if (!hwndDlg) return;
 
@@ -275,31 +289,35 @@ HPEN hDashPen = ::CreatePen(PS_DASH, 1, RGB(128, 128, 128));  // Przerywane dla 
         ::DeleteObject(hHandlePen);
     }
 
+
 // 2. LOGIKA RENDEROWANIA ZAMROŻONYCH SIATEK - ETAP 2 (Odczyt geometrii w locie z linii natywnej)
     int limit = min(pData->numSaved, 30);
     for (int k = 0; k < limit; k++) {
         SavedGrid& grid = pData->drawings[k];
-        if (grid.lineNumber == 0) continue; 
+        
+        // PIERWSZE ZADANIE: Bezpieczny warunek renderowania oparty na cenach (zapobiega pomijaniu odczytu z dysku)
+        if (grid.priceA == 0.0f || grid.priceB == 0.0f) continue; 
 
         int drawIdxA = grid.idxA;
         float drawPriceA = grid.priceA;
         int drawIdxB = grid.idxB;
         float drawPriceB = grid.priceB;
         
-        float tmpCalcPrices[5];
-        for (int i = 0; i < 5; i++) tmpCalcPrices[i] = grid.calculatedPrices[i];
+float tmpCalcPrices[10];
+        for (int i = 0; i < 10; i++) tmpCalcPrices[i] = grid.calculatedPrices[i];
 
-        // Pobranie aktualnych współrzędnych z natywnej linii Sierry (Real-Time Follow podczas przesuwania)
+        // Pobranie aktualnych współrzędnych z natywnej linii Sierre (Real-Time Follow podczas przesuwania)
         s_UseTool ExistingLine;
-        if (sc.GetUserDrawingByLineNumber(sc.ChartNumber, grid.lineNumber, ExistingLine)) {
+        bool lineFound = sc.GetUserDrawingByLineNumber(sc.ChartNumber, grid.lineNumber, ExistingLine);
+        if (lineFound) {
             drawIdxA = ExistingLine.BeginIndex;
             drawPriceA = ExistingLine.BeginValue;
             drawIdxB = ExistingLine.EndIndex;
             drawPriceB = ExistingLine.EndValue;
 
-            // Błyskawiczna rekalkulacja GDI dla płynnego podglądu przesuwania ramy
-            float ratios[5] = {0.000f, 0.382f, 0.500f, 0.618f, 1.000f};
-            for (int i = 0; i < 5; i++) {
+// Błyskawiczna rekalkulacja GDI dla 10 zdefiniowanych poziomów (Matryca z Trade Navigatora - Poprawna Kolejność)
+            float ratios[10] = {0.000f, 0.250f, 0.382f, 0.500f, 0.618f, 0.700f, 0.786f, 0.850f, 0.886f, 1.000f};
+            for (int i = 0; i < 10; i++) {
                 tmpCalcPrices[i] = sc.RoundToTickSize(drawPriceA + ratios[i] * (drawPriceB - drawPriceA));
             }
         }
@@ -312,12 +330,18 @@ HPEN hDashPen = ::CreatePen(PS_DASH, 1, RGB(128, 128, 128));  // Przerywane dla 
         int xLeft  = (xA < xB) ? xA : xB;
         int xRight = (xA > xB) ? xA : xB;
 
-        // ETAP 2: Usunięto GDI ::MoveToEx i ::LineTo dla linii głównej (ukośnej). Rysuje ją Sierra.
+        // DRUGIE ZADANIE: Jeśli linia natywna wygasła po restarcie platformy, silnik GDI awaryjnie sam rysuje przerywany grzbiet (Spine)
+        if (!lineFound) {
+            int yA = sc.RegionValueToYPixelCoordinate(drawPriceA, sc.GraphRegion);
+            int yB = sc.RegionValueToYPixelCoordinate(drawPriceB, sc.GraphRegion);
+            ::MoveToEx(hDC, xA, yA, NULL);
+            ::LineTo(hDC, xB, yB);
+        }
 
-::SetBkMode(hDC, TRANSPARENT);
+        ::SetBkMode(hDC, TRANSPARENT);
         ::SetTextAlign(hDC, TA_NOUPDATECP); 
 
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 10; i++) {
             if (!grid.customUse[i]) continue; // RESTRYKCJA ERGONOMII: Ukrywanie linii wyłączonych w Menu
 
             int yLevel = sc.RegionValueToYPixelCoordinate(tmpCalcPrices[i], sc.GraphRegion);
@@ -344,6 +368,8 @@ HPEN hDashPen = ::CreatePen(PS_DASH, 1, RGB(128, 128, 128));  // Przerywane dla 
             ::SelectObject(hDC, hOldCustomPen);
             ::DeleteObject(hCustomPen);
         }
+
+
 
         // ETAP 2: Rysowanie krążków kontrolnych, gdy obiekt jest ZAZNACZONY lub PODNIESIONY do edycji
         if (pData->SelectedIdx == k || pData->DraggingIdx == k) {
@@ -502,10 +528,10 @@ if (pData == NULL) {
                     pData->drawings[k].timeB = sc.BaseDateTimeIn[snappedBIdx];
                 }
 
-// Pancerne przeliczenie cen stref bezpośrednio w buforze RAM
+// Pancerne przeliczenie cen stref bezpośrednio w buforze RAM dla 10 poziomów
                 float pA = pData->drawings[k].priceA;
                 float pB = pData->drawings[k].priceB;
-                for (int i = 0; i < 5; i++) {
+                for (int i = 0; i < 10; i++) {
                     pData->drawings[k].calculatedPrices[i] = sc.RoundToTickSize(pA + pData->drawings[k].customRatios[i] * (pB - pA));
                 }
 
@@ -629,10 +655,10 @@ if (pData == NULL) {
                             // Wywołanie autorskiego okna modalnego Win32 skompilowanego bezpośrednio wewnątrz DLL
                             ShowModalConfig((HWND)sc.ChartWindowHandle, pData->drawings[newSelectedIdx]);
                             
-                            // Wymuszenie natychmiastowej rekalkulacji ramy cenowej Fibo po zamknięciu okna dialogowego
+// Wymuszenie natychmiastowej rekalkulacji ramy cenowej Fibo po zamknięciu okna dialogowego dla 10 stref
                             float pA = pData->drawings[newSelectedIdx].priceA;
                             float pB = pData->drawings[newSelectedIdx].priceB;
-                            for (int i = 0; i < 5; i++) {
+                            for (int i = 0; i < 10; i++) {
                                 pData->drawings[newSelectedIdx].calculatedPrices[i] = sc.RoundToTickSize(pA + pData->drawings[newSelectedIdx].customRatios[i] * (pB - pA));
                             }
                             
@@ -666,13 +692,23 @@ if (pData == NULL) {
                     pData->drawings[activeSlot].timeA = sc.BaseDateTimeIn[snappedAIdx];
                     pData->drawings[activeSlot].idxA = snappedAIdx;
 
-                    // ETAP 3: Inicjalizacja domyślnych kolorów i współczynników z Trade Navigatora dla nowej fali
-                    float defaultRatios[5] = {0.000f, 0.382f, 0.500f, 0.618f, 1.000f};
-                    COLORREF defaultColors[5] = {RGB(0, 0, 255), RGB(255, 0, 0), RGB(0, 0, 0), RGB(255, 0, 0), RGB(0, 0, 255)}; 
-                    for (int i = 0; i < 5; i++) {
+// ETAP 3: Kompletna inicjalizacja 10 poziomów (Pełna chronologia rynkowa)
+                    float defaultRatios[10] = {0.000f, 0.250f, 0.382f, 0.500f, 0.618f, 0.700f, 0.786f, 0.850f, 0.886f, 1.000f};
+                    COLORREF defaultColors[10] = {
+                        RGB(0, 0, 255),   // 0: Blue
+                        RGB(255, 0, 0),   // 0.25: Red
+                        RGB(255, 0, 0),   // 0.382: Red
+                        RGB(0, 0, 255),   // 0.5: Blue
+                        RGB(255, 0, 0),   // 0.618: Red
+                        RGB(0, 0, 0),     // 0.7: Black
+                        RGB(255, 0, 0),   // 0.786: Red
+                        RGB(255, 0, 0),   // 0.85: Red (Teraz poprawnie przed 0.886)
+                        RGB(128, 128, 128),// 0.886: Grey
+                        RGB(0, 0, 255)    // 1: Blue
+                    };
+                    for (int i = 0; i < 10; i++) {
                         pData->drawings[activeSlot].customRatios[i] = defaultRatios[i];
                         pData->drawings[activeSlot].customColors[i] = defaultColors[i];
-                        // NAPRAWA: Usunięto wadliwą linię pData->customUse[i] = 1; (była przyczyną błędu struct)
                         pData->drawings[activeSlot].customUse[i] = 1;
                     }
 
@@ -721,15 +757,12 @@ if (pData == NULL) {
                     SpineLine.LineWidth = 1;
                     sc.UseTool(SpineLine);
                     
-                    float pA = pData->drawings[activeSlot].priceA;
+float pA = pData->drawings[activeSlot].priceA;
                     float pB = pData->drawings[activeSlot].priceB;
                     
-                    for (int i = 0; i < 5; i++) {
+                    for (int i = 0; i < 10; i++) {
                         float rawPrice = pA + pData->drawings[activeSlot].customRatios[i] * (pB - pA);
                         pData->drawings[activeSlot].calculatedPrices[i] = sc.RoundToTickSize(rawPrice);
-                    }
-                    for (int i = 5; i < 10; i++) {
-                        pData->drawings[activeSlot].calculatedPrices[i] = 0.0f;
                     }
                     
                     pData->numSaved++; 
@@ -776,11 +809,11 @@ if (pData == NULL) {
                     pData->drawings[k].idxB = newIdxB;
                 }
 
-// Automatyczne przeliczenie cen stref dla nowych indeksów czasowych z zachowaniem struktury profilu
+// Automatyczne przeliczenie cen stref dla nowych indeksów czasowych dla wszystkich 10 poziomów
                 float pA = pData->drawings[k].priceA;
                 float pB = pData->drawings[k].priceB;
                 
-                for (int i = 0; i < 5; i++) {
+                for (int i = 0; i < 10; i++) {
                     float rawPrice = pA + pData->drawings[k].customRatios[i] * (pB - pA);
                     pData->drawings[k].calculatedPrices[i] = sc.RoundToTickSize(rawPrice);
                 }
