@@ -8,3 +8,9 @@ Versions are git tags: `macdpredictor-v2`, `macdpredictor-v3`.
 
 - **V2**: Control Bar toggle button with Master State, TradeNavigator-replica MACD predictor line.
 - **V3**: Stealth look: clean header, value label on the price scale, thinner line, button 3.
+
+## Notes
+
+- The version numbers are the number of the author's working session. There is no saved code for V1 (an analysis of the TradeNavigator formula before the first saved snapshot; its result is already part of V2).
+- Inside the code the study is called `DiNapoli MACD Predictor` (function `scsf_DiNapoliMACDP`, DLL name `DiNapoli_MACDP_Navigator_Replica_v10`; the "v10" in that name is a leftover, not a version); the folder is called `MACDPredictor` after the author's own file name.
+- The history was added to this repository later, from the author's own notes. The commit date of each version is the date on which that code snapshot was saved (US Eastern time), not the day it was uploaded. The code is copied unchanged, including the Polish comments.
