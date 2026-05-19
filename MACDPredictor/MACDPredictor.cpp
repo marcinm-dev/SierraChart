@@ -11,15 +11,27 @@ SCSFExport scsf_DiNapoliMACDP(SCStudyInterfaceRef sc)
         sc.GraphName = "DiNapoli MACD Predictor";
         sc.AutoLoop = 1; 
         sc.UpdateAlways = 0; 
-        
+		sc.GraphRegion = 0;
+        		
+		sc.DisplayStudyName = 0;      
+        sc.DisplayStudyInputValues = 0;   
+        sc.GlobalDisplayStudySubgraphsNameAndValue = 1;		
+				
         sc.Input[0].Name = "Numer Przycisku"; 
-        sc.Input[0].SetInt(5);
+        sc.Input[0].SetInt(3);
 
         Predictor.Name = "DiNapoli MACD Predictor";
         Predictor.DrawStyle = DRAWSTYLE_LINE;
         Predictor.PrimaryColor = RGB(255, 0, 0); 
-        Predictor.LineWidth = 2;
+        Predictor.LineWidth = 1;
         Predictor.GraphicalDisplacement = 1; 
+        Predictor.DisplayNameValueInDataLine = 0;
+        Predictor.DisplayNameValueInWindowsFlags = 1;
+		Predictor.IncludeInSpreadsheet = 0; // Spreadsheet Guard
+		Predictor.IncludeInStudySummary = 0;
+		Predictor.LineLabel = LL_DISPLAY_VALUE  | LL_VALUE_ALIGN_VALUES_SCALE | LL_VALUE_ALIGN_CENTER;
+		
+
 
         return;
     }
