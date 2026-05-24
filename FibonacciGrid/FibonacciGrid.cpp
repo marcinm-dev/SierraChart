@@ -118,6 +118,36 @@ int GetSnappedIndex(SCStudyInterfaceRef sc, int mouseIdx, int range, bool findHi
     return bestIdx;
 }
 
+// --- HELPER: Tworzenie lub aktualizacja natywnej linii grzbietu (SpineLine) --- // ← ZMIANA
+int ApplySpineLine(SCStudyInterfaceRef sc, int lineNumber, int idxA, float priceA, int idxB, float priceB) { // ← ZMIANA
+    s_UseTool SpineLine;
+    SpineLine.Clear();
+    SpineLine.ChartNumber = sc.ChartNumber;
+    SpineLine.DrawingType = DRAWING_LINE;
+    SpineLine.LineNumber = lineNumber;
+    SpineLine.AddMethod = UTAM_ADD_OR_ADJUST;
+    SpineLine.AddAsUserDrawnDrawing = 0;
+    SpineLine.BeginIndex = idxA;
+    SpineLine.BeginValue = priceA;
+    SpineLine.EndIndex = idxB;
+    SpineLine.EndValue = priceB;
+    SpineLine.Color = RGB(0, 0, 255);
+    SpineLine.LineStyle = LINESTYLE_DOT;
+    SpineLine.LineWidth = 1;
+    sc.UseTool(SpineLine);
+    return SpineLine.LineNumber; // ← ZMIANA: zwraca przydzielony numer (ważne dla nowych linii)
+}
+
+// --- HELPER: Ścieżka do pliku danych wykresu --- // ← ZMIANA
+void GetDataFilePath(SCStudyInterfaceRef sc, char* buf) { // ← ZMIANA
+    sprintf(buf, "%sFibGrid_%d_%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID); // ← ZMIANA
+}
+
+// --- HELPER: Ścieżka do globalnego pliku presetów --- // ← ZMIANA
+void GetPresetsFilePath(SCStudyInterfaceRef sc, char* buf) { // ← ZMIANA
+    sprintf(buf, "%sFibGridPresets.dat", sc.DataFilesFolder().GetChars()); // ← ZMIANA
+}
+
 // --- ETAP 3: PROGRAMOWA PROCEDURA OKNA MODALNEGO (WYGODA Z TRADE NAVIGATORA) ---
 
 // ← ZMIANA: Kontener danych przekazywanych do okna modalnego
@@ -322,6 +352,8 @@ case WM_DESTROY:
 
 // Funkcja zarządzająca wstrzykiwaniem okna i blokowaniem wątku nadrzędnego (Trwały Tryb Modalny)
 void ShowModalConfig(HWND hParent, SavedGrid& grid, FibonacciData* pData, const char* presetsPath) { // ← ZMIANA: dodano presetsPath
+    static bool classRegistered = false; // ← ZMIANA: rejestracja klasy Win32 tylko raz przez cały czas życia DLL
+
     // ← ZMIANA: Kontener danych modalnych — żyje na stosie przez całą pętlę msgloop
     ModalUserData userData;
     userData.pGrid          = &grid;
@@ -331,16 +363,19 @@ void ShowModalConfig(HWND hParent, SavedGrid& grid, FibonacciData* pData, const 
     strncpy(userData.presetsPath, presetsPath, 511); // ← ZMIANA
     userData.presetsPath[511] = '\0';               // ← ZMIANA
 
-    WNDCLASSA wc = {0};
-    wc.lpfnWndProc = ModalConfigWndProc;
-    wc.hInstance = ::GetModuleHandleA(NULL);
-    wc.hCursor = ::LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
-    wc.lpszClassName = "FibGridConfigClass";
-    ::RegisterClassA(&wc);
+    if (!classRegistered) { // ← ZMIANA: guard — rejestracja tylko przy pierwszym wywołaniu
+        WNDCLASSA wc = {0};
+        wc.lpfnWndProc = ModalConfigWndProc;
+        wc.hInstance = ::GetModuleHandleA(NULL);
+        wc.hCursor = ::LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
+        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+        wc.lpszClassName = "FibGridConfigClass";
+        ::RegisterClassA(&wc);
+        classRegistered = true; // ← ZMIANA
+    } // ← ZMIANA
 
 HWND hwndDlg = ::CreateWindowExA(WS_EX_DLGMODALFRAME, "FibGridConfigClass", "Properties (Config / 10 Levels)",
-        WS_POPUPWINDOW | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 300, 400, hParent, NULL, wc.hInstance, &userData); // ← ZMIANA: szerokość 300px
+        WS_POPUPWINDOW | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 300, 400, hParent, NULL, ::GetModuleHandleA(NULL), &userData); // ← ZMIANA: wc.hInstance → GetModuleHandleA (wc przeniesione do guard)
 
     if (!hwndDlg) return;
 
@@ -392,6 +427,10 @@ HPEN hDashPen = ::CreatePen(PS_DOT, 1, RGB(0, 0, 255));  // Kropkowane (Blue) dl
     int      hOldBkMode    = ::GetBkMode(hDC);    // ← ZMIANA: zapis trybu tła DC (zakres funkcji)
     UINT     hOldTextAlign = ::GetTextAlign(hDC); // ← ZMIANA: zapis wyrównania tekstu DC (zakres funkcji)
 
+    // ← ZMIANA: GDI Pen Pool — pióra tworzone raz per unikalna para (kolor, grubość), reużywane w całej pętli siatek
+    struct PenCacheEntry { COLORREF color; int width; HPEN pen; }; // ← ZMIANA
+    PenCacheEntry penCache[20]; // ← ZMIANA: maks. 20 unikalnych par (10 poziomów × 2 grubości)
+    int penCacheCount = 0;      // ← ZMIANA
 
 // Matematyczne wyznaczenie indeksu aktualnie rysowanego obiektu w maszynie stanów
     int activeSlot = pData->numSaved % 30;
@@ -440,7 +479,11 @@ int aIdx = pData->drawings[activeSlot].idxA;
         
         // PIERWSZE ZADANIE: Bezpieczny warunek renderowania oparty na cenach (zapobiega pomijaniu odczytu z dysku)
         if (grid.priceA == 0.0f || grid.priceB == 0.0f) continue;
-        if (abs(grid.idxB - grid.idxA) < sc.Input[9].GetInt()) continue; // ← ZMIANA: Min Bars Visibility Threshold
+        if (abs(grid.idxB - grid.idxA) < sc.Input[9].GetInt()) { // ← ZMIANA: Min Bars Visibility Threshold
+            if (grid.lineNumber != 0)
+                sc.DeleteACSChartDrawing(sc.ChartNumber, 0, grid.lineNumber); // ← ZMIANA: usunięcie natywnego spine poniżej progu
+            continue;
+        }
 
         int drawIdxA = grid.idxA;
         float drawPriceA = grid.priceA;
@@ -483,6 +526,7 @@ float tmpCalcPrices[10];
 
         // DRUGIE ZADANIE: Jeśli linia natywna wygasła po restarcie platformy, silnik GDI awaryjnie sam rysuje przerywany grzbiet (Spine)
         if (!lineFound) {
+            ::SelectObject(hDC, hDashPen); // ← ZMIANA: reset do pióra kropkowanego — pool poziomów mógł zostawić inne pióro aktywne w DC
             int yA = sc.RegionValueToYPixelCoordinate(drawPriceA, sc.GraphRegion);
             int yB = sc.RegionValueToYPixelCoordinate(drawPriceB, sc.GraphRegion);
             ::MoveToEx(hDC, xA, yA, NULL);
@@ -501,9 +545,23 @@ float tmpCalcPrices[10];
 // Dynamiczne wyznaczenie grubości (poziomy bazowe 0.000 i 1.000 otrzymują grubość 2, reszta 1)
 int currentLineWidth = (i == 0 || i == 9) ? 2 : 1;
 
-// Dynamiczna kreacja i natychmiastowa utylizacja wielokolorowych piór GDI jądra Windows
-HPEN hCustomPen = ::CreatePen(PS_SOLID, currentLineWidth, grid.customColors[i]);
-HPEN hOldCustomPen = (HPEN)::SelectObject(hDC, hCustomPen);
+            // ← ZMIANA: Lookup w puli — pióro tworzone tylko raz per unikalna para (kolor, grubość)
+            HPEN hCustomPen = NULL; // ← ZMIANA
+            for (int p = 0; p < penCacheCount; p++) { // ← ZMIANA
+                if (penCache[p].color == grid.customColors[i] && penCache[p].width == currentLineWidth) { // ← ZMIANA
+                    hCustomPen = penCache[p].pen; break; // ← ZMIANA
+                } // ← ZMIANA
+            } // ← ZMIANA
+            if (hCustomPen == NULL) { // ← ZMIANA: nowy kolor/grubość — tworzenie i rejestracja w puli
+                hCustomPen = ::CreatePen(PS_SOLID, currentLineWidth, grid.customColors[i]); // ← ZMIANA
+                if (penCacheCount < 20) { // ← ZMIANA
+                    penCache[penCacheCount].color = grid.customColors[i]; // ← ZMIANA
+                    penCache[penCacheCount].width = currentLineWidth;     // ← ZMIANA
+                    penCache[penCacheCount].pen   = hCustomPen;           // ← ZMIANA
+                    penCacheCount++;                                       // ← ZMIANA
+                } // ← ZMIANA
+            } // ← ZMIANA
+            ::SelectObject(hDC, hCustomPen); // ← ZMIANA: bez zapisu hOldCustomPen — DC przywracany przez hOldPen na końcu funkcji
             ::SetTextColor(hDC, grid.customColors[i]); // Synchronizacja koloru napisów z kolorem linii strefy
 
             ::MoveToEx(hDC, xLeft, yLevel, NULL);
@@ -518,9 +576,7 @@ HPEN hOldCustomPen = (HPEN)::SelectObject(hDC, hCustomPen);
             SCString priceStr = sc.FormatGraphValue(tmpCalcPrices[i], sc.BaseGraphValueFormat);
             RECT rectRight = { xRight + 5, yLevel - 20, xRight + 150, yLevel + 20 };
             ::DrawTextA(hDC, priceStr.GetChars(), -1, &rectRight, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
-
-            ::SelectObject(hDC, hOldCustomPen);
-            ::DeleteObject(hCustomPen);
+            // ← ZMIANA: SelectObject przywracający i DeleteObject usunięte — pióra żyją do końca pętli siatek
         }
 
 
@@ -554,7 +610,8 @@ HPEN hOldCustomPen = (HPEN)::SelectObject(hDC, hCustomPen);
 
 
 // Bezpieczne czyszczenie i uwalnianie uchwytów jądra Windows GDI (Zapobieganie GDI Leaks)
-    ::SelectObject(hDC, hOldPen);
+    ::SelectObject(hDC, hOldPen); // ← Przywrócenie oryginalnego pióra DC — deselektuje ostatnie pióro z puli
+    for (int p = 0; p < penCacheCount; p++) ::DeleteObject(penCache[p].pen); // ← ZMIANA: jednorazowe czyszczenie całej puli
     ::SelectObject(hDC, hOldFont); // Przywrócenie domyślnej czcionki platformy Sierra Chart
     ::DeleteObject(hDashPen);
     ::DeleteObject(hSolidPen);
@@ -681,9 +738,8 @@ if (pData == NULL) {
                 pData->activeConfig = 0;
             }
 
-            // NAPRAWA: Dodano nawiasy () do sc.DataFilesFolder() przed wywołaniem GetChars()
             char fn[512];
-            sprintf(fn, "%sFibGrid_%d_%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
+            GetDataFilePath(sc, fn); // ← ZMIANA
             FILE* f = fopen(fn, "rb");
             if (f) {
                 // ← ZMIANA: Guard rozmiaru — odrzucenie pliku .dat o niekompatybilnym rozmiarze
@@ -708,7 +764,7 @@ if (pData == NULL) {
             // ← ZMIANA: Globalny plik presetów nadpisuje presety — zawsze wygrywa nad per-chart .dat
             {
                 char presetsFn[512];
-                sprintf(presetsFn, "%sFibGridPresets.dat", sc.DataFilesFolder().GetChars());
+                GetPresetsFilePath(sc, presetsFn); // ← ZMIANA
                 FILE* fp = fopen(presetsFn, "rb");
                 if (fp) {
                     fseek(fp, 0, SEEK_END); long sz = ftell(fp); fseek(fp, 0, SEEK_SET);
@@ -854,14 +910,14 @@ if (pData == NULL) return;
             pData->SelectedIdx = -1;
             
             // ZAPIS ZMIAN NA DYSK - STRUMIEŃ BINARNY (ETAP 4)
-char fn[512];
-            sprintf(fn, "%sFibGrid_%d_%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
+            char fn[512];
+            GetDataFilePath(sc, fn); // ← ZMIANA
             FILE* f = fopen(fn, "wb");
             if (f) {
                 fwrite(pData, sizeof(FibonacciData), 1, f);
                 fclose(f);
             }
-            
+
             // WYMUSZENIE NATYCHMIASTOWEGO REPAINTU OFFLINE (ETAP 5)
             sc.Subgraph[0][sc.ArraySize - 1] = (float)sc.ActiveToolYValue + 0.001f;
         }
@@ -891,8 +947,8 @@ char fn[512];
 pData->SelectedIdx = -1;
 
         // ZAPIS ZMIAN NA DYSK - STRUMIEŃ BINARNY (ETAP 4)
-char fn[512];
-        sprintf(fn, "%sFibGrid_%d_%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
+        char fn[512];
+        GetDataFilePath(sc, fn); // ← ZMIANA
         FILE* f = fopen(fn, "wb");
         if (f) {
             fwrite(pData, sizeof(FibonacciData), 1, f);
@@ -945,21 +1001,9 @@ char fn[512];
                 }
 
 
-                s_UseTool SpineLine;
-                SpineLine.Clear();
-                SpineLine.ChartNumber = sc.ChartNumber;
-                SpineLine.DrawingType = DRAWING_LINE;
-                SpineLine.LineNumber = pData->drawings[k].lineNumber;
-                SpineLine.AddMethod = UTAM_ADD_OR_ADJUST;
-                SpineLine.AddAsUserDrawnDrawing = 0; 
-                SpineLine.BeginIndex = pData->drawings[k].idxA;
-                SpineLine.BeginValue = pData->drawings[k].priceA;
-                SpineLine.EndIndex = pData->drawings[k].idxB;
-                SpineLine.EndValue = pData->drawings[k].priceB;
-SpineLine.Color = RGB(0, 0, 255);
-SpineLine.LineStyle = LINESTYLE_DOT;
-                SpineLine.LineWidth = 1;
-                sc.UseTool(SpineLine);
+                ApplySpineLine(sc, pData->drawings[k].lineNumber, // ← ZMIANA
+                    pData->drawings[k].idxA, pData->drawings[k].priceA,
+                    pData->drawings[k].idxB, pData->drawings[k].priceB);
             }
 else if (pData->TState == 2) {
                 int aIdx = pData->drawings[activeSlot].idxA;
@@ -969,21 +1013,9 @@ else if (pData->TState == 2) {
                 int snappedBIdx = GetSnappedIndex(sc, cIdx, snapRange, findBHigh);
                 float previewPriceB = findBHigh ? sc.High[snappedBIdx] : sc.Low[snappedBIdx];
 
-                s_UseTool SpineLine;
-                SpineLine.Clear();
-                SpineLine.ChartNumber = sc.ChartNumber;
-                SpineLine.DrawingType = DRAWING_LINE;
-                SpineLine.LineNumber = pData->drawings[activeSlot].lineNumber;
-                SpineLine.AddMethod = UTAM_ADD_OR_ADJUST;
-                SpineLine.AddAsUserDrawnDrawing = 0; 
-                SpineLine.BeginIndex = pData->drawings[activeSlot].idxA;
-                SpineLine.BeginValue = pData->drawings[activeSlot].priceA;
-                SpineLine.EndIndex = snappedBIdx;
-                SpineLine.EndValue = previewPriceB;
-SpineLine.Color = RGB(0, 0, 255);
-SpineLine.LineStyle = LINESTYLE_DOT;
-                SpineLine.LineWidth = 1;
-                sc.UseTool(SpineLine);
+                ApplySpineLine(sc, pData->drawings[activeSlot].lineNumber, // ← ZMIANA
+                    pData->drawings[activeSlot].idxA, pData->drawings[activeSlot].priceA,
+                    snappedBIdx, previewPriceB);
             }
         }
 
@@ -1064,7 +1096,7 @@ SpineLine.LineStyle = LINESTYLE_DOT;
                         if (newSelectedIdx != -1 && pData->SelectedIdx == newSelectedIdx && (currentClickTime - pData->LastClickTime <= 300)) {
                             // ← ZMIANA: Przeładowanie najnowszych presetów z globalnego pliku przed otwarciem modalu
                             char presetsFn[512];
-                            sprintf(presetsFn, "%sFibGridPresets.dat", sc.DataFilesFolder().GetChars());
+                            GetPresetsFilePath(sc, presetsFn); // ← ZMIANA
                             {
                                 FILE* fp = fopen(presetsFn, "rb");
                                 if (fp) {
@@ -1076,17 +1108,16 @@ SpineLine.LineStyle = LINESTYLE_DOT;
                             }
                             // Wywołanie autorskiego okna modalnego Win32 skompilowanego bezpośrednio wewnątrz DLL
                             ShowModalConfig((HWND)sc.ChartWindowHandle, pData->drawings[newSelectedIdx], pData, presetsFn); // ← ZMIANA
-                            
+
 // Wymuszenie natychmiastowej rekalkulacji ramy cenowej Fibo po zamknięciu okna dialogowego dla 10 stref
                             float pA = pData->drawings[newSelectedIdx].priceA;
                             float pB = pData->drawings[newSelectedIdx].priceB;
                             for (int i = 0; i < 10; i++) {
                                 pData->drawings[newSelectedIdx].calculatedPrices[i] = sc.RoundToTickSize(pA + pData->drawings[newSelectedIdx].customRatios[i] * (pB - pA));
                             }
-                            
-                            // NAPRAWA: Korekta wywołania sc.DataFilesFolder() z nawiasami
+
                             char fn[512];
-                            sprintf(fn, "%sFibGrid_%d_%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
+                            GetDataFilePath(sc, fn); // ← ZMIANA
                             FILE* f = fopen(fn, "wb");
                             if (f) {
                                 fwrite(pData, sizeof(FibonacciData), 1, f);
@@ -1122,23 +1153,10 @@ SpineLine.LineStyle = LINESTYLE_DOT;
                         pData->drawings[activeSlot].customUse[i]    = pData->presets[cfg].use[i];
                     }
 
-                    s_UseTool SpineLine;
-                    SpineLine.Clear();
-                    SpineLine.ChartNumber = sc.ChartNumber;
-                    SpineLine.DrawingType = DRAWING_LINE;
-                    SpineLine.AddMethod = UTAM_ADD_OR_ADJUST;
-                    SpineLine.AddAsUserDrawnDrawing = 0; 
-                    SpineLine.BeginIndex = snappedAIdx;
-                    SpineLine.BeginValue = pData->drawings[activeSlot].priceA;
-                    SpineLine.EndIndex = snappedAIdx;
-                    SpineLine.EndValue = pData->drawings[activeSlot].priceA;
-SpineLine.Color = RGB(0, 0, 255);
-SpineLine.LineStyle = LINESTYLE_DOT;
-                    SpineLine.LineWidth = 1;
-                    sc.UseTool(SpineLine);
-
-                    pData->drawings[activeSlot].lineNumber = SpineLine.LineNumber; 
-                    pData->TState = 2; 
+                    pData->drawings[activeSlot].lineNumber = ApplySpineLine(sc, 0, // ← ZMIANA: 0 = nowa linia, zwraca przydzielony lineNumber
+                        snappedAIdx, pData->drawings[activeSlot].priceA,
+                        snappedAIdx, pData->drawings[activeSlot].priceA);
+                    pData->TState = 2;
                 }
                 else if (pData->TState == 2) {
                     int aIdx = pData->drawings[activeSlot].idxA;
@@ -1151,35 +1169,22 @@ SpineLine.LineStyle = LINESTYLE_DOT;
                     pData->drawings[activeSlot].timeB = sc.BaseDateTimeIn[snappedBIdx];
                     pData->drawings[activeSlot].idxB = snappedBIdx;
                     
-                    s_UseTool SpineLine;
-                    SpineLine.Clear();
-                    SpineLine.ChartNumber = sc.ChartNumber;
-                    SpineLine.DrawingType = DRAWING_LINE;
-                    SpineLine.LineNumber = pData->drawings[activeSlot].lineNumber;
-                    SpineLine.AddMethod = UTAM_ADD_OR_ADJUST;
-                    SpineLine.AddAsUserDrawnDrawing = 0; 
-                    SpineLine.BeginIndex = pData->drawings[activeSlot].idxA;
-                    SpineLine.BeginValue = pData->drawings[activeSlot].priceA;
-                    SpineLine.EndIndex = snappedBIdx;
-                    SpineLine.EndValue = pData->drawings[activeSlot].priceB;
-SpineLine.Color = RGB(0, 0, 255);
-SpineLine.LineStyle = LINESTYLE_DOT;
-                    SpineLine.LineWidth = 1;
-                    sc.UseTool(SpineLine);
-                    
-float pA = pData->drawings[activeSlot].priceA;
+                    ApplySpineLine(sc, pData->drawings[activeSlot].lineNumber, // ← ZMIANA
+                        pData->drawings[activeSlot].idxA, pData->drawings[activeSlot].priceA,
+                        snappedBIdx, pData->drawings[activeSlot].priceB);
+
+                    float pA = pData->drawings[activeSlot].priceA;
                     float pB = pData->drawings[activeSlot].priceB;
-                    
+
                     for (int i = 0; i < 10; i++) {
                         float rawPrice = pA + pData->drawings[activeSlot].customRatios[i] * (pB - pA);
                         pData->drawings[activeSlot].calculatedPrices[i] = sc.RoundToTickSize(rawPrice);
                     }
-                    
-                    pData->numSaved++; 
 
-// NAPRAWA: Korekta wywołania sc.DataFilesFolder() z nawiasami
+                    pData->numSaved++;
+
                     char fn[512];
-                    sprintf(fn, "%sFibGrid_%d_%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
+                    GetDataFilePath(sc, fn); // ← ZMIANA
                     FILE* f = fopen(fn, "wb");
                     if (f) {
                         fwrite(pData, sizeof(FibonacciData), 1, f);
@@ -1243,21 +1248,13 @@ float pA = pData->drawings[activeSlot].priceA;
                     }
 
                     // Rekonstrukcja obiektów natywnych po przywróceniu widoczności lub zmianie interwału
-                    s_UseTool SpineLine;
-                    SpineLine.Clear();
-                    SpineLine.ChartNumber = sc.ChartNumber;
-                    SpineLine.DrawingType = DRAWING_LINE;
-                    SpineLine.LineNumber = pData->drawings[k].lineNumber;
-                    SpineLine.AddMethod = UTAM_ADD_OR_ADJUST;
-                    SpineLine.AddAsUserDrawnDrawing = 0; 
-                    SpineLine.BeginIndex = pData->drawings[k].idxA;
-                    SpineLine.BeginValue = pData->drawings[k].priceA;
-                    SpineLine.EndIndex = pData->drawings[k].idxB;
-                    SpineLine.EndValue = pData->drawings[k].priceB;
-SpineLine.Color = RGB(0, 0, 255);
-SpineLine.LineStyle = LINESTYLE_DOT;
-                    SpineLine.LineWidth = 1;
-                    sc.UseTool(SpineLine);
+                    if (abs(pData->drawings[k].idxB - pData->drawings[k].idxA) >= sc.Input[9].GetInt()) { // ← ZMIANA: nie odtwarzaj spine poniżej progu
+                        ApplySpineLine(sc, pData->drawings[k].lineNumber, // ← ZMIANA
+                            pData->drawings[k].idxA, pData->drawings[k].priceA,
+                            pData->drawings[k].idxB, pData->drawings[k].priceB);
+                    } else if (pData->drawings[k].lineNumber != 0) { // ← ZMIANA: poniżej progu — usuń jeśli jeszcze istnieje
+                        sc.DeleteACSChartDrawing(sc.ChartNumber, 0, pData->drawings[k].lineNumber); // ← ZMIANA
+                    } // ← ZMIANA
                 }
             }
         }

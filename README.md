@@ -10,7 +10,7 @@ Custom studies for [Sierra Chart](https://www.sierrachart.com/) written in ACSIL
 | [D1BarReplay](D1BarReplay/) | Lets daily and higher-timeframe historical charts show the state of a trading day as of any moment of a Bar Replay. Works on chart data in memory only. | V1 (`d1barreplay-v1`) |
 | [DiNapoliRetracement](DiNapoliRetracement/) | DiNapoli retracement grids drawn with two clicks: a Focus point and one or more Reaction points give the 0.382, 0.618 and 1.000 levels. Has Control Bar buttons. | V26 (`dinapoliretracement-v26`) |
 | [DMA3x3](DMA3x3/) | Displaced Moving Average 3x3 (SMA of the last 3 closes shifted forward by 3 bars) with a Control Bar show/hide button. | V2 (`dma3x3-v2`) |
-| [FibonacciGrid](FibonacciGrid/) | Fibonacci grid of up to 10 levels drawn with two clicks between swing points (wick snapping), with four presets, a settings window and Control Bar buttons. | V16 (`fibonaccigrid-v16`) |
+| [FibonacciGrid](FibonacciGrid/) | Fibonacci grid of up to 10 levels drawn with two clicks between swing points (wick snapping), with four presets, a settings window and Control Bar buttons. | V17 (`fibonaccigrid-v17`) |
 
 ## Other tools
 
