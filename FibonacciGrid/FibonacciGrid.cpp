@@ -366,6 +366,9 @@ HPEN hDashPen = ::CreatePen(PS_DOT, 1, RGB(0, 0, 255));  // Kropkowane (Blue) dl
                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, 
                                 DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
     HFONT hOldFont = (HFONT)::SelectObject(hDC, hFont); // Wstrzyknięcie czcionki do potoku renderera Windows
+    COLORREF hOldTextColor = ::GetTextColor(hDC); // ← ZMIANA: zapis koloru tekstu DC (zakres funkcji)
+    int      hOldBkMode    = ::GetBkMode(hDC);    // ← ZMIANA: zapis trybu tła DC (zakres funkcji)
+    UINT     hOldTextAlign = ::GetTextAlign(hDC); // ← ZMIANA: zapis wyrównania tekstu DC (zakres funkcji)
 
 
 // Matematyczne wyznaczenie indeksu aktualnie rysowanego obiektu w maszynie stanów
@@ -457,7 +460,7 @@ float tmpCalcPrices[10];
         }
 
         ::SetBkMode(hDC, TRANSPARENT);
-        ::SetTextAlign(hDC, TA_NOUPDATECP); 
+        ::SetTextAlign(hDC, TA_NOUPDATECP);
 
         for (int i = 0; i < 10; i++) {
             if (!grid.customUse[i]) continue; // RESTRYKCJA ERGONOMII: Ukrywanie linii wyłączonych w Menu
@@ -526,6 +529,9 @@ HPEN hOldCustomPen = (HPEN)::SelectObject(hDC, hCustomPen);
     ::DeleteObject(hDashPen);
     ::DeleteObject(hSolidPen);
     ::DeleteObject(hFont);         // BEZPIECZEŃSTWO: Fizyczne usunięcie czcionki z jądra OS Windows
+    ::SetBkMode(hDC, hOldBkMode);        // ← ZMIANA: przywrócenie trybu tła (naprawa białej obramówki ceny)
+    ::SetTextColor(hDC, hOldTextColor);  // ← ZMIANA: przywrócenie koloru tekstu
+    ::SetTextAlign(hDC, hOldTextAlign);  // ← ZMIANA: przywrócenie wyrównania tekstu
 }
 
 // --- GŁÓWNA FUNKCJA WSKAŹNIKA ---
