@@ -17,10 +17,16 @@ struct SavedGrid {
     int idxA;
     int idxB;
     float calculatedPrices[10];
-    int lineNumber;           
-float customRatios[10];    // ETAP 3: Tablica rozszerzona do 10 stref
+    int lineNumber;
+    float customRatios[10];    // ETAP 3: Tablica rozszerzona do 10 stref
     COLORREF customColors[10]; // ETAP 3: Tablica rozszerzona do 10 stref
     int customUse[10];         // ETAP 3: Tablica rozszerzona do 10 stref
+};
+
+struct FibonacciPreset {  // ← ZMIANA
+    float ratios[10];
+    COLORREF colors[10];
+    int use[10];
 };
 
 struct FibonacciData {
@@ -36,6 +42,8 @@ struct FibonacciData {
     // --- ETAP 1 HIDE: Rejestry magistrali synchronizacji i osłony GPU ---
     int LastSyncValue;          // Zapamiętany poprzedni stan ukrycia (detekcja zmiany impulsu)
     int StabCounter;            // Licznik klatek amortyzacji GPU dla bezpiecznego redrawu
+    FibonacciPreset presets[4]; // ← ZMIANA
+    int activeConfig;           // ← ZMIANA
 };
 #pragma pack(pop)
 
@@ -89,39 +97,73 @@ int GetSnappedIndex(SCStudyInterfaceRef sc, int mouseIdx, int range, bool findHi
 }
 
 // --- ETAP 3: PROGRAMOWA PROCEDURA OKNA MODALNEGO (WYGODA Z TRADE NAVIGATORA) ---
+
+// ← ZMIANA: Kontener danych przekazywanych do okna modalnego
+struct ModalUserData {
+    SavedGrid*     pGrid;          // wskaźnik na rysunek (kolory modyfikowane on-the-fly)
+    FibonacciData* pData;          // dostęp do globalnych presetów
+    SavedGrid      original;       // snapshot przy otwarciu — dla Cancel i CURRENT
+    int            selectedConfig; // 0-3 = Config 1-4,  4 = CURRENT
+    char           presetsPath[512]; // ← ZMIANA: ścieżka do globalnego pliku presetów
+};
+
 LRESULT CALLBACK ModalConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
-    SavedGrid* pGrid = (SavedGrid*)GetWindowLongPtrA(hWnd, GWLP_USERDATA);
+    ModalUserData* pUD = (ModalUserData*)GetWindowLongPtrA(hWnd, GWLP_USERDATA); // ← ZMIANA
 
     switch (message) {
 
 case WM_CREATE: {
         CREATESTRUCTA* pCreate = (CREATESTRUCTA*)lParam;
-        pGrid = (SavedGrid*)pCreate->lpCreateParams;
-        SetWindowLongPtrA(hWnd, GWLP_USERDATA, (LONG_PTR)pGrid);
+        pUD = (ModalUserData*)pCreate->lpCreateParams; // ← ZMIANA
+        SetWindowLongPtrA(hWnd, GWLP_USERDATA, (LONG_PTR)pUD);
 
-// Kompaktowa matryca rozmieszczenia kontrolek dla 10 poziomów (Bez przycisku tekstowego)
+        SavedGrid* pGrid = pUD->pGrid; // ← ZMIANA: lokalny alias dla czytelności
+
+        // ← ZMIANA: Selektor konfiguracji — 5 radio buttonów w jednym wierszu u góry
+        ::CreateWindowA("BUTTON", "C1", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP,
+            5,   10, 45, 20, hWnd, (HMENU)(UINT_PTR)300, NULL, NULL);
+        ::CreateWindowA("BUTTON", "C2", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+            53,  10, 45, 20, hWnd, (HMENU)(UINT_PTR)301, NULL, NULL);
+        ::CreateWindowA("BUTTON", "C3", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+            101, 10, 45, 20, hWnd, (HMENU)(UINT_PTR)302, NULL, NULL);
+        ::CreateWindowA("BUTTON", "C4", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+            149, 10, 45, 20, hWnd, (HMENU)(UINT_PTR)303, NULL, NULL);
+        HWND hCurr = ::CreateWindowA("BUTTON", "CURRENT", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+            198, 10, 62, 20, hWnd, (HMENU)(UINT_PTR)304, NULL, NULL);
+        ::SendMessageA(hCurr, BM_SETCHECK, BST_CHECKED, 0); // domyślnie CURRENT
+
+// Kompaktowa matryca rozmieszczenia kontrolek dla 10 poziomów — y przesunięte o +45 px
         for (int i = 0; i < 10; i++) {
-            HWND hCheck = ::CreateWindowA("BUTTON", "", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 15 + i * 25, 20, 20, hWnd, (HMENU)(UINT_PTR)(100 + i), NULL, NULL);
+            HWND hCheck = ::CreateWindowA("BUTTON", "", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                20, 60 + i * 25, 20, 20, hWnd, (HMENU)(UINT_PTR)(100 + i), NULL, NULL); // ← ZMIANA y
             SendMessageA(hCheck, BM_SETCHECK, pGrid->customUse[i] ? BST_CHECKED : BST_UNCHECKED, 0);
 
             char buf[32];
             sprintf(buf, "%g", pGrid->customRatios[i]);
-            ::CreateWindowA("EDIT", buf, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 50, 15 + i * 25, 60, 20, hWnd, (HMENU)(UINT_PTR)(200 + i), NULL, NULL);
+            ::CreateWindowA("EDIT", buf, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+                50, 60 + i * 25, 60, 20, hWnd, (HMENU)(UINT_PTR)(200 + i), NULL, NULL); // ← ZMIANA y
         }
 
-        // Przyciski przeniesione na dół zaktualizowanego formularza (y = 280)
-        ::CreateWindowA("BUTTON", "OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 40, 280, 80, 25, hWnd, (HMENU)(UINT_PTR)IDOK, NULL, NULL);
-        ::CreateWindowA("BUTTON", "Cancel", WS_CHILD | WS_VISIBLE, 140, 280, 80, 25, hWnd, (HMENU)(UINT_PTR)IDCANCEL, NULL, NULL);
+        // ← ZMIANA: Przycisk Nadpisz (disabled domyślnie — aktywny tylko dla C1-C4)
+        HWND hNadpisz = ::CreateWindowA("BUTTON", "Nadpisz Config", WS_CHILD | WS_VISIBLE,
+            10, 325, 105, 25, hWnd, (HMENU)(UINT_PTR)400, NULL, NULL);
+        ::EnableWindow(hNadpisz, FALSE);
+
+        // Przyciski OK / Cancel przesunięte w dół
+        ::CreateWindowA("BUTTON", "OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+            120, 325, 60, 25, hWnd, (HMENU)(UINT_PTR)IDOK, NULL, NULL); // ← ZMIANA y
+        ::CreateWindowA("BUTTON", "Cancel", WS_CHILD | WS_VISIBLE,
+            190, 325, 60, 25, hWnd, (HMENU)(UINT_PTR)IDCANCEL, NULL, NULL); // ← ZMIANA y
         break;
     }
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = ::BeginPaint(hWnd, &ps);
-        if (pGrid) {
+        if (pUD && pUD->pGrid) { // ← ZMIANA
             // Próbki kwadratów koloru dla wszystkich 10 stref
             for (int i = 0; i < 10; i++) {
-                HBRUSH hBrush = ::CreateSolidBrush(pGrid->customColors[i]);
-                RECT r = { 205, 15 + i * 25, 235, 15 + i * 25 + 20 };
+                HBRUSH hBrush = ::CreateSolidBrush(pUD->pGrid->customColors[i]); // ← ZMIANA
+                RECT r = { 205, 60 + i * 25, 235, 60 + i * 25 + 20 }; // ← ZMIANA y
                 ::FillRect(hdc, &r, hBrush);
                 ::DeleteObject(hBrush);
             }
@@ -131,14 +173,15 @@ case WM_CREATE: {
     }
 
 case WM_LBUTTONDOWN: {
-        if (!pGrid) break;
+        if (!pUD || !pUD->pGrid) break; // ← ZMIANA
+        SavedGrid* pGrid = pUD->pGrid;  // ← ZMIANA: lokalny alias
         int mouseX = LOWORD(lParam);
         int mouseY = HIWORD(lParam);
 
         // Hit-Testing: Sprawdzamy czy kursor znajduje się w horyzontalnych granicach kolumny kwadratów (X: 205 do 235)
         if (mouseX >= 205 && mouseX <= 235) {
             for (int i = 0; i < 10; i++) {
-                int yTop = 15 + i * 25;
+                int yTop = 60 + i * 25; // ← ZMIANA y
                 int yBottom = yTop + 20;
 
                 // Sprawdzamy pionowy przedział dla każdego z 10 poziomów
@@ -170,10 +213,61 @@ case WM_LBUTTONDOWN: {
         break;
     }
     case WM_COMMAND: {
-        if (!pGrid) return ::DefWindowProcA(hWnd, message, wParam, lParam);
+        if (!pUD || !pUD->pGrid) return ::DefWindowProcA(hWnd, message, wParam, lParam); // ← ZMIANA
+        SavedGrid*     pGrid = pUD->pGrid; // ← ZMIANA: lokalny alias
+        FibonacciData* pData = pUD->pData; // ← ZMIANA: lokalny alias
         int wmId = LOWORD(wParam);
 
-        if (wmId == IDOK) {
+        // ← ZMIANA: Obsługa radio buttonów — ładowanie presetu do kontrolek
+        if (wmId >= 300 && wmId <= 303) {
+            int cfg = wmId - 300;
+            pUD->selectedConfig = cfg;
+            ::EnableWindow(::GetDlgItem(hWnd, 400), TRUE);
+            for (int i = 0; i < 10; i++) {
+                ::SendMessageA(::GetDlgItem(hWnd, 100 + i), BM_SETCHECK,
+                    pData->presets[cfg].use[i] ? BST_CHECKED : BST_UNCHECKED, 0);
+                char buf[32];
+                sprintf(buf, "%g", pData->presets[cfg].ratios[i]);
+                ::SetWindowTextA(::GetDlgItem(hWnd, 200 + i), buf);
+                pGrid->customColors[i] = pData->presets[cfg].colors[i];
+            }
+            ::InvalidateRect(hWnd, NULL, TRUE);
+        }
+        // ← ZMIANA: Powrót do CURRENT — przywrócenie snapshot
+        else if (wmId == 304) {
+            pUD->selectedConfig = 4;
+            ::EnableWindow(::GetDlgItem(hWnd, 400), FALSE);
+            for (int i = 0; i < 10; i++) {
+                ::SendMessageA(::GetDlgItem(hWnd, 100 + i), BM_SETCHECK,
+                    pUD->original.customUse[i] ? BST_CHECKED : BST_UNCHECKED, 0);
+                char buf[32];
+                sprintf(buf, "%g", pUD->original.customRatios[i]);
+                ::SetWindowTextA(::GetDlgItem(hWnd, 200 + i), buf);
+                pGrid->customColors[i] = pUD->original.customColors[i];
+            }
+            ::InvalidateRect(hWnd, NULL, TRUE);
+        }
+        // ← ZMIANA: Nadpisz — zapis stanu kontrolek do globalnego presetu
+        else if (wmId == 400) {
+            int cfg = pUD->selectedConfig;
+            if (cfg >= 0 && cfg <= 3) {
+                for (int i = 0; i < 10; i++) {
+                    pData->presets[cfg].use[i]    = (::SendMessageA(::GetDlgItem(hWnd, 100 + i), BM_GETCHECK, 0, 0) == BST_CHECKED) ? 1 : 0;
+                    char buf[64];
+                    ::GetWindowTextA(::GetDlgItem(hWnd, 200 + i), buf, 64);
+                    pData->presets[cfg].ratios[i] = (float)atof(buf);
+                    pData->presets[cfg].colors[i] = pGrid->customColors[i];
+                }
+                // ← ZMIANA: Utrwalenie wszystkich 4 presetów do globalnego pliku
+                FILE* fp = fopen(pUD->presetsPath, "wb");
+                if (fp) {
+                    fwrite(pData->presets, sizeof(FibonacciPreset), 4, fp);
+                    fclose(fp);
+                }
+            }
+            // Modal zostaje otwarty
+        }
+        else if (wmId == IDOK) {
             // Zrzucenie 10 rekordów z kontrolek Win32 do bufora RAM
             for (int i = 0; i < 10; i++) {
                 HWND hCheck = ::GetDlgItem(hWnd, 100 + i);
@@ -187,6 +281,8 @@ case WM_LBUTTONDOWN: {
             ::DestroyWindow(hWnd);
         }
         else if (wmId == IDCANCEL) {
+            // ← ZMIANA: Przywrócenie snapshot — rysunek niezmieniony
+            memcpy(pGrid, &pUD->original, sizeof(SavedGrid));
             ::DestroyWindow(hWnd);
         }
         break;
@@ -203,7 +299,16 @@ case WM_DESTROY:
 }
 
 // Funkcja zarządzająca wstrzykiwaniem okna i blokowaniem wątku nadrzędnego (Trwały Tryb Modalny)
-void ShowModalConfig(HWND hParent, SavedGrid& grid) {
+void ShowModalConfig(HWND hParent, SavedGrid& grid, FibonacciData* pData, const char* presetsPath) { // ← ZMIANA: dodano presetsPath
+    // ← ZMIANA: Kontener danych modalnych — żyje na stosie przez całą pętlę msgloop
+    ModalUserData userData;
+    userData.pGrid          = &grid;
+    userData.pData          = pData;
+    userData.selectedConfig = 4; // domyślnie CURRENT
+    memcpy(&userData.original, &grid, sizeof(SavedGrid)); // snapshot dla Cancel/CURRENT
+    strncpy(userData.presetsPath, presetsPath, 511); // ← ZMIANA
+    userData.presetsPath[511] = '\0';               // ← ZMIANA
+
     WNDCLASSA wc = {0};
     wc.lpfnWndProc = ModalConfigWndProc;
     wc.hInstance = ::GetModuleHandleA(NULL);
@@ -212,8 +317,8 @@ void ShowModalConfig(HWND hParent, SavedGrid& grid) {
     wc.lpszClassName = "FibGridConfigClass";
     ::RegisterClassA(&wc);
 
-HWND hwndDlg = ::CreateWindowExA(WS_EX_DLGMODALFRAME, "FibGridConfigClass", "Properties (1 Profile / 10 Levels)", 
-        WS_POPUPWINDOW | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 265, 355, hParent, NULL, wc.hInstance, &grid);
+HWND hwndDlg = ::CreateWindowExA(WS_EX_DLGMODALFRAME, "FibGridConfigClass", "Properties (Config / 10 Levels)",
+        WS_POPUPWINDOW | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 300, 400, hParent, NULL, wc.hInstance, &userData); // ← ZMIANA: szerokość 300px
 
     if (!hwndDlg) return;
 
@@ -442,26 +547,38 @@ sc.p_GDIFunction = DrawFibonacciGDI;
         sc.Subgraph[0].DrawStyle = DRAWSTYLE_HIDDEN; // Ukryty, nie generuje linii ani napisów
 
 // INTEGRACJA Z CONTROL BAR - Konfiguracja wejść dla przycisków (Elastyczność UI)
-        sc.Input[0].Name = "Control Bar Button ID - Draw Tool";
+        sc.Input[0].Name = "Control Bar Button ID - FIB1"; // ← ZMIANA
         sc.Input[0].SetInt(31);
 
-        sc.Input[1].Name = "Control Bar Button ID - Last Delete";
-        sc.Input[1].SetInt(35);
+        sc.Input[1].Name = "Control Bar Button ID - FIB2"; // ← ZMIANA
+        sc.Input[1].SetInt(32);
 
-        sc.Input[2].Name = "Control Bar Button ID - All Delete";
-        sc.Input[2].SetInt(36);
+        sc.Input[2].Name = "Control Bar Button ID - FIB3"; // ← ZMIANA
+        sc.Input[2].SetInt(33);
+
+        sc.Input[3].Name = "Control Bar Button ID - FIB4"; // ← ZMIANA
+        sc.Input[3].SetInt(34);
+
+        sc.Input[4].Name = "Control Bar Button ID - Last Delete"; // ← ZMIANA
+        sc.Input[4].SetInt(35);
+
+        sc.Input[5].Name = "Control Bar Button ID - All Delete"; // ← ZMIANA
+        sc.Input[5].SetInt(36);
 
         // --- ETAP 2 HIDE: Konfiguracja wejść integracyjnych dla trybu Slave ---
-        sc.Input[3].Name = "Sync z Master HIDE (Button 20)";
-        sc.Input[3].SetYesNo(1);
+        sc.Input[6].Name = "Sync z Master HIDE (Button 20)"; // ← ZMIANA
+        sc.Input[6].SetYesNo(1);
 
-        sc.Input[4].Name = "Master Hide Button ID";
-        sc.Input[4].SetInt(20);
+        sc.Input[7].Name = "Master Hide Button ID"; // ← ZMIANA
+        sc.Input[7].SetInt(20);
 
         // Nadanie nazw przyciskom na pasku na podstawie dynamicznych wartości z menu ustawień
-        sc.SetCustomStudyControlBarButtonText(sc.Input[0].GetInt(), "FIB RETR"); 
-        sc.SetCustomStudyControlBarButtonText(sc.Input[1].GetInt(), "LAST DEL"); 
-        sc.SetCustomStudyControlBarButtonText(sc.Input[2].GetInt(), "ALL DEL"); 
+        sc.SetCustomStudyControlBarButtonText(sc.Input[0].GetInt(), "FIB 1"); // ← ZMIANA
+        sc.SetCustomStudyControlBarButtonText(sc.Input[1].GetInt(), "FIB 2"); // ← ZMIANA
+        sc.SetCustomStudyControlBarButtonText(sc.Input[2].GetInt(), "FIB 3"); // ← ZMIANA
+        sc.SetCustomStudyControlBarButtonText(sc.Input[3].GetInt(), "FIB 4"); // ← ZMIANA
+        sc.SetCustomStudyControlBarButtonText(sc.Input[4].GetInt(), "LAST DEL");
+        sc.SetCustomStudyControlBarButtonText(sc.Input[5].GetInt(), "ALL DEL");
 
         return;
     }
@@ -478,22 +595,64 @@ if (pData == NULL) {
             pData->TState = 0;
             pData->DraggingIdx = -1; 
             pData->DraggedPoint = 0;
-            pData->SelectedIdx = -1;  
+            pData->SelectedIdx = -1;
+
+            // ← ZMIANA: Inicjalizacja 4 presetów wartościami fabrycznymi
+            {
+                float defRatios[10] = {0.000f, 0.250f, 0.382f, 0.500f, 0.618f, 0.700f, 0.786f, 0.850f, 0.886f, 1.000f};
+                COLORREF defColors[10] = {
+                    RGB(0,0,255), RGB(255,0,0), RGB(255,0,0), RGB(0,0,255), RGB(255,0,0),
+                    RGB(0,0,0),   RGB(255,0,0), RGB(255,0,0), RGB(128,128,128), RGB(0,0,255)
+                };
+                int defUse0[10] = {1,0,0,0,1,1,1,0,1,1}; // ← ZMIANA: FIB1 — pełny zestaw
+                int defUse1[10] = {1,0,1,1,0,0,0,0,0,1}; // ← ZMIANA: FIB2 — 0.382, 0.500
+                int defUse2[10] = {1,1,0,1,0,0,0,0,0,1}; // ← ZMIANA: FIB3 — 0.250, 0.500
+                int defUse3[10] = {1,0,1,0,0,0,0,0,0,1}; // ← ZMIANA: FIB4 — 0.382
+                int* defUsePtrs[4] = {defUse0, defUse1, defUse2, defUse3}; // ← ZMIANA
+                for (int p = 0; p < 4; p++) {
+                    for (int i = 0; i < 10; i++) {
+                        pData->presets[p].ratios[i] = defRatios[i];
+                        pData->presets[p].colors[i] = defColors[i];
+                        pData->presets[p].use[i]    = defUsePtrs[p][i]; // ← ZMIANA
+                    }
+                }
+                pData->activeConfig = 0;
+            }
 
             // NAPRAWA: Dodano nawiasy () do sc.DataFilesFolder() przed wywołaniem GetChars()
             char fn[512];
             sprintf(fn, "%sFibGrid_%d_%d.dat", sc.DataFilesFolder().GetChars(), sc.ChartNumber, sc.StudyGraphInstanceID);
             FILE* f = fopen(fn, "rb");
             if (f) {
-                fread(pData, sizeof(FibonacciData), 1, f);
+                // ← ZMIANA: Guard rozmiaru — odrzucenie pliku .dat o niekompatybilnym rozmiarze
+                fseek(f, 0, SEEK_END);
+                long fileSize = ftell(f);
+                fseek(f, 0, SEEK_SET);
+                if (fileSize == (long)sizeof(FibonacciData)) {
+                    fread(pData, sizeof(FibonacciData), 1, f);
+                    if (pData->activeConfig < 0 || pData->activeConfig > 3) pData->activeConfig = 0; // ← ZMIANA: clamp
+                }
                 fclose(f);
-                
+
                 // Sanacja i mrożenie stanów ulotnych jądra myszy po wciągnięciu płaskiego bloku bajtów RAM
                 pData->LastSize = -1;
                 pData->TState = 0;
                 pData->DraggingIdx = -1;
                 pData->DraggedPoint = 0;
                 pData->SelectedIdx = -1;
+            }
+
+            // ← ZMIANA: Globalny plik presetów nadpisuje presety — zawsze wygrywa nad per-chart .dat
+            {
+                char presetsFn[512];
+                sprintf(presetsFn, "%sFibGridPresets.dat", sc.DataFilesFolder().GetChars());
+                FILE* fp = fopen(presetsFn, "rb");
+                if (fp) {
+                    fseek(fp, 0, SEEK_END); long sz = ftell(fp); fseek(fp, 0, SEEK_SET);
+                    if (sz == (long)(sizeof(FibonacciPreset) * 4))
+                        fread(pData->presets, sizeof(FibonacciPreset), 4, fp);
+                    fclose(fp);
+                }
             }
         }
     }
@@ -510,10 +669,13 @@ if (pData == NULL) {
 if (pData == NULL) return;
 
     // DYNAMICZNE MAPOWANIE PRZYCISKÓW Z MENU USTAWIEN (sc.Input) - Likwidacja sztywnych literałów
-    int DrawBtn    = sc.Input[0].GetInt();
-    int LastDelBtn = sc.Input[1].GetInt();
-    int AllDelBtn  = sc.Input[2].GetInt();
-    int HideBtn    = sc.Input[4].GetInt(); // ETAP 3 HIDE: Mapowanie przycisku ukrywania
+    int DrawBtn1   = sc.Input[0].GetInt(); // ← ZMIANA
+    int DrawBtn2   = sc.Input[1].GetInt(); // ← ZMIANA
+    int DrawBtn3   = sc.Input[2].GetInt(); // ← ZMIANA
+    int DrawBtn4   = sc.Input[3].GetInt(); // ← ZMIANA
+    int LastDelBtn = sc.Input[4].GetInt(); // ← ZMIANA
+    int AllDelBtn  = sc.Input[5].GetInt(); // ← ZMIANA
+    int HideBtn    = sc.Input[7].GetInt(); // ← ZMIANA
 
     // --- ETAP 3 HIDE: Most decyzyjny i osłona GPU (Slave Mode) ---
     if (sc.IsFullRecalculation) {
@@ -521,7 +683,7 @@ if (pData == NULL) return;
     }
 
     int currentGlobalHide = sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT);
-    bool isSyncImpulse = (sc.Input[3].GetYesNo() && sc.MenuEventID == HideBtn);
+    bool isSyncImpulse = (sc.Input[6].GetYesNo() && sc.MenuEventID == HideBtn); // ← ZMIANA
     
     bool effectiveIsVisible = (currentGlobalHide == 0);
     if (isSyncImpulse) {
@@ -538,16 +700,25 @@ if (pData == NULL) return;
 
 // 5. POPRAWIONY HANDSHAKE PASKA I POINTER PROXY (Wzorzec z DiNapoli)
 
-    if (sc.PointerEventType == SC_ACS_BUTTON_ON && sc.MenuEventID == DrawBtn) {
-        pData->TState = 1; 
-        
-        HWND hRoot = ::GetAncestor((HWND)sc.ChartWindowHandle, GA_ROOT);
-        if (hRoot != NULL) {
-            int CachedPointerID = FindSierraMenuCommandID(hRoot, "Tools", "Pointer");
-            if (CachedPointerID > 0) {
-                ::PostMessageA(hRoot, WM_COMMAND, CachedPointerID, 0);
+    if (sc.PointerEventType == SC_ACS_BUTTON_ON) { // ← ZMIANA
+        int hitConfig = -1;
+        if      (sc.MenuEventID == DrawBtn1) hitConfig = 0; // ← ZMIANA
+        else if (sc.MenuEventID == DrawBtn2) hitConfig = 1; // ← ZMIANA
+        else if (sc.MenuEventID == DrawBtn3) hitConfig = 2; // ← ZMIANA
+        else if (sc.MenuEventID == DrawBtn4) hitConfig = 3; // ← ZMIANA
+
+        if (hitConfig >= 0) { // ← ZMIANA
+            pData->activeConfig = hitConfig; // ← ZMIANA
+            pData->TState = 1;
+
+            HWND hRoot = ::GetAncestor((HWND)sc.ChartWindowHandle, GA_ROOT);
+            if (hRoot != NULL) {
+                int CachedPointerID = FindSierraMenuCommandID(hRoot, "Tools", "Pointer");
+                if (CachedPointerID > 0) {
+                    ::PostMessageA(hRoot, WM_COMMAND, CachedPointerID, 0);
+                }
             }
-        }
+        } // ← ZMIANA
     }
 
 // 6. ASYNCHRONICZNY HAMULEC BEZPIECZEŃSTWA Z PEŁNĄ SANACJĄ OBIEKTÓW OSIEROCONYCH
@@ -565,7 +736,10 @@ if (pData == NULL) return;
 
         // Reset parametrów jądra sterowania
         pData->TState = 0;
-        sc.SetCustomStudyControlBarButtonEnable(DrawBtn, 0);
+        sc.SetCustomStudyControlBarButtonEnable(DrawBtn1, 0); // ← ZMIANA
+        sc.SetCustomStudyControlBarButtonEnable(DrawBtn2, 0); // ← ZMIANA
+        sc.SetCustomStudyControlBarButtonEnable(DrawBtn3, 0); // ← ZMIANA
+        sc.SetCustomStudyControlBarButtonEnable(DrawBtn4, 0); // ← ZMIANA
         sc.CharacterEventCode = 0;
 
         // WYMUSZENIE NATYCHMIASTOWEGO REPAINTU OFFLINE: Linia zniknie w ułamku milisekundy
@@ -798,8 +972,20 @@ SpineLine.LineStyle = LINESTYLE_DOT;
 // ASYNCHRONICZNY EMULATOR DWUKLIKU NA GRZBIECIE (SPINE QUICK EDIT HOOK)
                         unsigned int currentClickTime = ::GetTickCount();
                         if (newSelectedIdx != -1 && pData->SelectedIdx == newSelectedIdx && (currentClickTime - pData->LastClickTime <= 300)) {
+                            // ← ZMIANA: Przeładowanie najnowszych presetów z globalnego pliku przed otwarciem modalu
+                            char presetsFn[512];
+                            sprintf(presetsFn, "%sFibGridPresets.dat", sc.DataFilesFolder().GetChars());
+                            {
+                                FILE* fp = fopen(presetsFn, "rb");
+                                if (fp) {
+                                    fseek(fp, 0, SEEK_END); long sz = ftell(fp); fseek(fp, 0, SEEK_SET);
+                                    if (sz == (long)(sizeof(FibonacciPreset) * 4))
+                                        fread(pData->presets, sizeof(FibonacciPreset), 4, fp);
+                                    fclose(fp);
+                                }
+                            }
                             // Wywołanie autorskiego okna modalnego Win32 skompilowanego bezpośrednio wewnątrz DLL
-                            ShowModalConfig((HWND)sc.ChartWindowHandle, pData->drawings[newSelectedIdx]);
+                            ShowModalConfig((HWND)sc.ChartWindowHandle, pData->drawings[newSelectedIdx], pData, presetsFn); // ← ZMIANA
                             
 // Wymuszenie natychmiastowej rekalkulacji ramy cenowej Fibo po zamknięciu okna dialogowego dla 10 stref
                             float pA = pData->drawings[newSelectedIdx].priceA;
@@ -838,28 +1024,13 @@ SpineLine.LineStyle = LINESTYLE_DOT;
                     pData->drawings[activeSlot].timeA = sc.BaseDateTimeIn[snappedAIdx];
                     pData->drawings[activeSlot].idxA = snappedAIdx;
 
-// ETAP 3: Kompletna inicjalizacja 10 poziomów (Pełna chronologia rynkowa)
-                    float defaultRatios[10] = {0.000f, 0.250f, 0.382f, 0.500f, 0.618f, 0.700f, 0.786f, 0.850f, 0.886f, 1.000f};
-                    COLORREF defaultColors[10] = {
-                        RGB(0, 0, 255),   // 0: Blue
-                        RGB(255, 0, 0),   // 0.25: Red
-                        RGB(255, 0, 0),   // 0.382: Red
-                        RGB(0, 0, 255),   // 0.5: Blue
-                        RGB(255, 0, 0),   // 0.618: Red
-                        RGB(0, 0, 0),     // 0.7: Black
-                        RGB(255, 0, 0),   // 0.786: Red
-                        RGB(255, 0, 0),   // 0.85: Red (Teraz poprawnie przed 0.886)
-                        RGB(128, 128, 128),// 0.886: Grey
-                        RGB(0, 0, 255)    // 1: Blue
-                    };
-// Matryca widoczności: indeksy 1 (0.25), 2 (0.382) oraz 3 (0.5) otrzymują stan 0 (wyłączone)
-int defaultUse[10] = { 1, 0, 0, 0, 1, 1, 1, 0, 1, 1 };
-
-for (int i = 0; i < 10; i++) {
-    pData->drawings[activeSlot].customRatios[i] = defaultRatios[i];
-    pData->drawings[activeSlot].customColors[i] = defaultColors[i];
-    pData->drawings[activeSlot].customUse[i] = defaultUse[i];
-}
+// ← ZMIANA: Inicjalizacja poziomów z aktywnego presetu zamiast hardkodowanych wartości
+                    int cfg = pData->activeConfig;
+                    for (int i = 0; i < 10; i++) {
+                        pData->drawings[activeSlot].customRatios[i] = pData->presets[cfg].ratios[i];
+                        pData->drawings[activeSlot].customColors[i] = pData->presets[cfg].colors[i];
+                        pData->drawings[activeSlot].customUse[i]    = pData->presets[cfg].use[i];
+                    }
 
                     s_UseTool SpineLine;
                     SpineLine.Clear();
@@ -925,8 +1096,11 @@ float pA = pData->drawings[activeSlot].priceA;
                         fclose(f);
                     }
 
-                    sc.SetCustomStudyControlBarButtonEnable(DrawBtn, 0); 
-                    pData->TState = 0;                             
+                    sc.SetCustomStudyControlBarButtonEnable(DrawBtn1, 0); // ← ZMIANA
+                    sc.SetCustomStudyControlBarButtonEnable(DrawBtn2, 0); // ← ZMIANA
+                    sc.SetCustomStudyControlBarButtonEnable(DrawBtn3, 0); // ← ZMIANA
+                    sc.SetCustomStudyControlBarButtonEnable(DrawBtn4, 0); // ← ZMIANA
+                    pData->TState = 0;
                 }
             }
         }
