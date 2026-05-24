@@ -534,14 +534,6 @@ float tmpCalcPrices[10];
         int xLeft  = (xA < xB) ? xA : xB;
         int xRight = (xA > xB) ? xA : xB;
 
-        // DRUGIE ZADANIE: Jeśli linia natywna wygasła po restarcie platformy, silnik GDI awaryjnie sam rysuje przerywany grzbiet (Spine)
-        if (!lineFound) {
-            ::SelectObject(hDC, hDashPen); // ← ZMIANA: reset do pióra kropkowanego — pool poziomów mógł zostawić inne pióro aktywne w DC
-            int yA = sc.RegionValueToYPixelCoordinate(drawPriceA, sc.GraphRegion);
-            int yB = sc.RegionValueToYPixelCoordinate(drawPriceB, sc.GraphRegion);
-            ::MoveToEx(hDC, xA, yA, NULL);
-            ::LineTo(hDC, xB, yB);
-        }
 
         for (int i = 0; i < 10; i++) {
             if (!grid.customUse[i]) continue; // RESTRYKCJA ERGONOMII: Ukrywanie linii wyłączonych w Menu
