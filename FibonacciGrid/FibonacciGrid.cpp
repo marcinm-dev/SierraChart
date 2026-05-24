@@ -42,6 +42,7 @@ struct FibonacciData {
     // --- ETAP 1 HIDE: Rejestry magistrali synchronizacji i osłony GPU ---
     int LastSyncValue;          // Zapamiętany poprzedni stan ukrycia (detekcja zmiany impulsu)
     int StabCounter;            // Licznik klatek amortyzacji GPU dla bezpiecznego redrawu
+    int LastLeftIdx;            // ← ZMIANA: Ostatni zapamiętany sc.IndexOfFirstVisibleBar (detekcja scrolla)
     FibonacciPreset presets[4]; // ← ZMIANA
     int activeConfig;           // ← ZMIANA
 };
@@ -467,6 +468,13 @@ float tmpCalcPrices[10];
 
         if (drawIdxA >= sc.ArraySize || drawIdxB >= sc.ArraySize) continue;
 
+        // ← ZMIANA: Viewport culling — pomijanie siatek całkowicie poza widocznym obszarem (margines ±50 barów)
+        {
+            int minIdx = (drawIdxA < drawIdxB) ? drawIdxA : drawIdxB;
+            int maxIdx = (drawIdxA > drawIdxB) ? drawIdxA : drawIdxB;
+            if (maxIdx < sc.IndexOfFirstVisibleBar - 50 || minIdx > sc.IndexOfLastVisibleBar + 50) continue;
+        }
+
         int xA = sc.BarIndexToXPixelCoordinate(drawIdxA);
         int xB = sc.BarIndexToXPixelCoordinate(drawIdxB);
 
@@ -572,9 +580,19 @@ sc.ReceivePointerEvents = ACS_RECEIVE_POINTER_EVENTS_ALWAYS; // ETAP 2: Poprawny
 sc.p_GDIFunction = DrawFibonacciGDI; 
         sc.ScaleRangeType = SCALE_SAMEASREGION;   
 
+// --- STEALTH MODE: Ukrycie nagłówka wskaźnika --- // ← ZMIANA
+        sc.DisplayStudyName = 0;                              // ← ZMIANA
+        sc.DisplayStudyInputValues = 0;                       // ← ZMIANA
+        sc.GlobalDisplayStudySubgraphsNameAndValue = 0;       // ← ZMIANA
+
 // --- STYMULATOR ODŚWIEŻANIA (Heartbeat Trigger dla trybu Offline) ---
         sc.Subgraph[0].Name = "Heartbeat";
         sc.Subgraph[0].DrawStyle = DRAWSTYLE_HIDDEN; // Ukryty, nie generuje linii ani napisów
+        sc.Subgraph[0].DisplayNameValueInDataLine = 0;    // ← ZMIANA
+        sc.Subgraph[0].DisplayNameValueInWindowsFlags = 0; // ← ZMIANA
+        sc.Subgraph[0].IncludeInSpreadsheet = 0;           // ← ZMIANA
+        sc.Subgraph[0].IncludeInStudySummary = 0;          // ← ZMIANA
+        sc.Subgraph[0].LineLabel = 0;                      // ← ZMIANA
 
 // INTEGRACJA Z CONTROL BAR - Konfiguracja wejść dla przycisków (Elastyczność UI)
         sc.Input[0].Name = "Control Bar Button ID - FIB1"; // ← ZMIANA
@@ -612,6 +630,9 @@ sc.p_GDIFunction = DrawFibonacciGDI;
         sc.Input[10].Name = "Search Range Bars"; // ← ZMIANA
         sc.Input[10].SetInt(25);                 // ← ZMIANA
 
+        sc.Input[11].Name = "GPU Safe-Lock Frames (Offline)"; // ← ZMIANA
+        sc.Input[11].SetInt(10);                              // ← ZMIANA
+
         // Nadanie nazw przyciskom na pasku na podstawie dynamicznych wartości z menu ustawień
         sc.SetCustomStudyControlBarButtonText(sc.Input[0].GetInt(), "FIB 1"); // ← ZMIANA
         sc.SetCustomStudyControlBarButtonText(sc.Input[1].GetInt(), "FIB 2"); // ← ZMIANA
@@ -633,9 +654,10 @@ if (pData == NULL) {
             sc.SetPersistentPointer(500, pData);
             pData->LastSize = -1;
             pData->TState = 0;
-            pData->DraggingIdx = -1; 
+            pData->DraggingIdx = -1;
             pData->DraggedPoint = 0;
             pData->SelectedIdx = -1;
+            pData->LastLeftIdx = -1; // ← ZMIANA
 
             // ← ZMIANA: Inicjalizacja 4 presetów wartościami fabrycznymi
             {
@@ -680,6 +702,7 @@ if (pData == NULL) {
                 pData->DraggingIdx = -1;
                 pData->DraggedPoint = 0;
                 pData->SelectedIdx = -1;
+                pData->LastLeftIdx = -1; // ← ZMIANA
             }
 
             // ← ZMIANA: Globalny plik presetów nadpisuje presety — zawsze wygrywa nad per-chart .dat
@@ -719,7 +742,7 @@ if (pData == NULL) return;
 
 // --- ETAP 3 HIDE: Most decyzyjny i osłona GPU (Slave Mode) ---
     if (sc.IsFullRecalculation) {
-        pData->StabCounter = 10; // Amortyzacja na zimnym starcie
+        pData->StabCounter = sc.Input[11].GetInt(); // ← ZMIANA
     }
 
     int currentGlobalHide = sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT);
@@ -727,7 +750,7 @@ if (pData == NULL) return;
     
     bool effectiveIsVisible = (currentGlobalHide == 0);
     if (isSyncImpulse) {
-        pData->StabCounter = 10;  // Stabilizacja klatek przy przełączaniu
+        pData->StabCounter = sc.Input[11].GetInt();  // ← ZMIANA
         pData->LastSize = -1;     // Wymuszenie otwarcia bramki redrawu
         if (currentGlobalHide == pData->LastSyncValue) {
             effectiveIsVisible = !effectiveIsVisible;
@@ -741,7 +764,7 @@ if (pData == NULL) return;
     if (currentGlobalHide != pData->LastSyncValue) { 
         pData->LastSyncValue = currentGlobalHide; 
         pData->LastSize = -1; 
-        pData->StabCounter = 10; // Krótki impuls stabilizacji przy przełączaniu HIDE
+        pData->StabCounter = sc.Input[11].GetInt(); // ← ZMIANA
         
         // WYMUSZENIE NATYCHMIASTOWEGO REPAINTU GDI OFFLINE PRZEZ AKTYWACJĘ GENERATORA BIĆ SERCA
         sc.Subgraph[0][sc.ArraySize - 1] = (float)sc.ActiveToolYValue + 0.001f;
@@ -755,6 +778,12 @@ if (pData == NULL) return;
 
     // Most decyzyjny (Single Source of Truth) dla silnika GDI - Rejestracja w Slocie 5
     sc.SetPersistentInt(5, effectiveIsVisible ? 1 : 0);
+
+    // ← ZMIANA: Detekcja przewijania — wymuszenie odświeżenia GDI w trybie offline
+    if (effectiveIsVisible && sc.IndexOfFirstVisibleBar != pData->LastLeftIdx) {
+        pData->LastLeftIdx = sc.IndexOfFirstVisibleBar;
+        sc.Subgraph[0][sc.ArraySize - 1] = (float)sc.ActiveToolYValue + 0.001f;
+    }
 
 // 5. POPRAWIONY HANDSHAKE PASKA I POINTER PROXY (Wzorzec z DiNapoli)
 
@@ -771,7 +800,8 @@ if (pData == NULL) return;
 
             HWND hRoot = ::GetAncestor((HWND)sc.ChartWindowHandle, GA_ROOT);
             if (hRoot != NULL) {
-                int CachedPointerID = FindSierraMenuCommandID(hRoot, "Tools", "Pointer");
+                int& CachedPointerID = sc.GetPersistentInt(45); // ← ZMIANA
+                if (CachedPointerID <= 0) CachedPointerID = FindSierraMenuCommandID(hRoot, "Tools", "Pointer"); // ← ZMIANA
                 if (CachedPointerID > 0) {
                     ::PostMessageA(hRoot, WM_COMMAND, CachedPointerID, 0);
                 }

@@ -4,7 +4,7 @@ FibonacciGrid draws a grid of up to 10 Fibonacci levels between two swing points
 
 ## Versions
 
-Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5`, `fibonaccigrid-v6`, `fibonaccigrid-v7`, `fibonaccigrid-v8`, `fibonaccigrid-v9`, `fibonaccigrid-v10`, `fibonaccigrid-v11`, `fibonaccigrid-v12`, `fibonaccigrid-v13`, `fibonaccigrid-v14`.
+Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5`, `fibonaccigrid-v6`, `fibonaccigrid-v7`, `fibonaccigrid-v8`, `fibonaccigrid-v9`, `fibonaccigrid-v10`, `fibonaccigrid-v11`, `fibonaccigrid-v12`, `fibonaccigrid-v13`, `fibonaccigrid-v14`, `fibonaccigrid-v16`.
 
 - **V3**: Base functionality: two-point Fibonacci grid.
 - **V4**: Wick snapping, buffer of several drawings and font fix.
@@ -18,3 +18,4 @@ Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5
 - **V12**: Passive HIDE bridge: the Slave follows the Master state.
 - **V13**: Restore the GDI device context state so the price label does not disappear.
 - **V14**: Minimum-bars visibility threshold and price search after a timeframe change.
+- **V16**: Stealth header, GPU safe-lock frames input, scroll detection and viewport culling.
