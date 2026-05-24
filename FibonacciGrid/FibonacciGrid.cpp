@@ -377,12 +377,14 @@ HPEN hDashPen = ::CreatePen(PS_DOT, 1, RGB(0, 0, 255));  // Kropkowane (Blue) dl
         int xA = sc.BarIndexToXPixelCoordinate(pData->drawings[activeSlot].idxA);
         int yA = sc.RegionValueToYPixelCoordinate(pData->drawings[activeSlot].priceA, sc.GraphRegion);
         
-        int aIdx = pData->drawings[activeSlot].idxA;
+int aIdx = pData->drawings[activeSlot].idxA;
         bool isAHigh = (pData->drawings[activeSlot].priceA == sc.High[aIdx]);
         bool findBHigh = !isAHigh; 
 
         int cIdx = sc.ActiveToolIndex;
-        int snappedBIdx = GetSnappedIndex(sc, cIdx, 2, findBHigh);
+        // Pobranie dynamicznego parametru bezpośrednio z konfiguracji Sierry dla wątku renderowania GDI
+        int snapRange = sc.Input[8].GetInt();
+        int snappedBIdx = GetSnappedIndex(sc, cIdx, snapRange, findBHigh);
         float previewPriceB = findBHigh ? sc.High[snappedBIdx] : sc.Low[snappedBIdx];
 
         int previewX = sc.BarIndexToXPixelCoordinate(snappedBIdx);
@@ -571,6 +573,10 @@ sc.p_GDIFunction = DrawFibonacciGDI;
 
         sc.Input[7].Name = "Master Hide Button ID"; // ← ZMIANA
         sc.Input[7].SetInt(20);
+		
+// Dynamiczny parametr dociągania do knotów (Snapping Range) z wartością domyślną 0
+        sc.Input[8].Name = "Snapping Range (Bars)"; 
+        sc.Input[8].SetInt(0);
 
         // Nadanie nazw przyciskom na pasku na podstawie dynamicznych wartości z menu ustawień
         sc.SetCustomStudyControlBarButtonText(sc.Input[0].GetInt(), "FIB 1"); // ← ZMIANA
@@ -824,7 +830,8 @@ char fn[512];
         int activeSlot = pData->numSaved % 30;
         int cIdx = sc.ActiveToolIndex;
         float mY = (float)sc.ActiveToolYValue;
-        int snapRange = 2;
+        // Podpięcie dynamicznego parametru użytkownika (wartość 0 w silniku GetSnappedIndex wyłączy snapping)
+        int snapRange = sc.Input[8].GetInt();
 
         // --- OBSŁUGA RUCHU MYSZY (Płynne śledzenie i rekalkulacja w RAM) ---
         if (sc.PointerEventType == SC_POINTER_MOVE) {
@@ -872,11 +879,12 @@ SpineLine.LineStyle = LINESTYLE_DOT;
                 SpineLine.LineWidth = 1;
                 sc.UseTool(SpineLine);
             }
-            else if (pData->TState == 2) {
+else if (pData->TState == 2) {
                 int aIdx = pData->drawings[activeSlot].idxA;
                 bool isAHigh = (pData->drawings[activeSlot].priceA == sc.High[aIdx]);
                 bool findBHigh = !isAHigh;
-                int snappedBIdx = GetSnappedIndex(sc, cIdx, 2, findBHigh);
+                // Pełna unifikacja - zastąpienie sztywnego literału dynamiczną zmienną snapRange
+                int snappedBIdx = GetSnappedIndex(sc, cIdx, snapRange, findBHigh);
                 float previewPriceB = findBHigh ? sc.High[snappedBIdx] : sc.Low[snappedBIdx];
 
                 s_UseTool SpineLine;
