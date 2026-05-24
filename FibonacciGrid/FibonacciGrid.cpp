@@ -68,6 +68,27 @@ int FindSierraMenuCommandID(HWND hRoot, const char* menuName, const char* itemNa
     return -1;
 }
 
+// --- FUNKCJA DOPASOWANIA (BAR-BASED RANGE) --- // ← ZMIANA
+int FindBestMatchIndex(SCStudyInterfaceRef sc, float targetPrice, SCDateTime targetTime, bool isHigh, int searchRangeBars) {
+    int baseIdx = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, targetTime);
+    if (baseIdx < 0) return -1;
+
+    int startScan = max(0, baseIdx - searchRangeBars);
+    int endScan = min(sc.ArraySize - 1, baseIdx + searchRangeBars);
+    int bestIdx = baseIdx;
+    bool foundExactPrice = false;
+
+    for (int i = startScan; i <= endScan; i++) {
+        float priceToCheck = isHigh ? sc.High[i] : sc.Low[i];
+        if (fabs(priceToCheck - targetPrice) < (sc.TickSize / 2.0f)) {
+            if (!foundExactPrice || abs(i - baseIdx) < abs(bestIdx - baseIdx)) {
+                bestIdx = i; foundExactPrice = true;
+            }
+        }
+    }
+    return bestIdx;
+}
+
 // --- SILNIK DOCIĄGANIA DO KNOTÓW (Snapping Engine) ---
 int GetSnappedIndex(SCStudyInterfaceRef sc, int mouseIdx, int range, bool findHigh) {
     int startIdx = mouseIdx - range;
@@ -417,7 +438,8 @@ int aIdx = pData->drawings[activeSlot].idxA;
         SavedGrid& grid = pData->drawings[k];
         
         // PIERWSZE ZADANIE: Bezpieczny warunek renderowania oparty na cenach (zapobiega pomijaniu odczytu z dysku)
-        if (grid.priceA == 0.0f || grid.priceB == 0.0f) continue; 
+        if (grid.priceA == 0.0f || grid.priceB == 0.0f) continue;
+        if (abs(grid.idxB - grid.idxA) < sc.Input[9].GetInt()) continue; // ← ZMIANA: Min Bars Visibility Threshold
 
         int drawIdxA = grid.idxA;
         float drawPriceA = grid.priceA;
@@ -581,8 +603,14 @@ sc.p_GDIFunction = DrawFibonacciGDI;
         sc.Input[7].SetInt(20);
 		
 // Dynamiczny parametr dociągania do knotów (Snapping Range) z wartością domyślną 0
-        sc.Input[8].Name = "Snapping Range (Bars)"; 
+        sc.Input[8].Name = "Snapping Range (Bars)";
         sc.Input[8].SetInt(0);
+
+        sc.Input[9].Name = "Min Bars Visibility Threshold"; // ← ZMIANA
+        sc.Input[9].SetInt(3);                              // ← ZMIANA
+
+        sc.Input[10].Name = "Search Range Bars"; // ← ZMIANA
+        sc.Input[10].SetInt(25);                 // ← ZMIANA
 
         // Nadanie nazw przyciskom na pasku na podstawie dynamicznych wartości z menu ustawień
         sc.SetCustomStudyControlBarButtonText(sc.Input[0].GetInt(), "FIB 1"); // ← ZMIANA
@@ -1156,21 +1184,24 @@ float pA = pData->drawings[activeSlot].priceA;
         if (pData->LastSize == -1 || sc.IsFullRecalculation || pData->StabCounter > 0) { 
             pData->LastSize = sc.ArraySize;
 
+            int searchRangeBars = sc.Input[10].GetInt(); // ← ZMIANA
             int limit = min(pData->numSaved, 30);
             for (int k = 0; k < limit; k++) {
                 if (pData->drawings[k].priceA > 0.0f && pData->drawings[k].priceB > 0.0f) {
-                    
-                    // 1. Dopasowanie indeksu Punktu A po unikalnej kotwicy czasu (DateTime)
-                    int newIdxA = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, pData->drawings[k].timeA);
-                    if (newIdxA >= 0 && newIdxA < sc.ArraySize) {
-                        pData->drawings[k].idxA = newIdxA;
-                    }
 
-                    // 2. Dopasowanie indeksu Punktu B po unikalnej kotwicy czasu (DateTime)
-                    int newIdxB = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, pData->drawings[k].timeB);
-                    if (newIdxB >= 0 && newIdxB < sc.ArraySize) {
-                        pData->drawings[k].idxB = newIdxB;
-                    }
+                    // 1. Dopasowanie indeksu Punktu A z precyzyjnym wyszukaniem ceny (Search Range Bars) // ← ZMIANA
+                    int approxIdxA = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, pData->drawings[k].timeA); // ← ZMIANA
+                    if (approxIdxA >= 0 && approxIdxA < sc.ArraySize) { // ← ZMIANA
+                        bool isAHigh = (fabs(sc.High[approxIdxA] - pData->drawings[k].priceA) < fabs(sc.Low[approxIdxA] - pData->drawings[k].priceA)); // ← ZMIANA
+                        pData->drawings[k].idxA = FindBestMatchIndex(sc, pData->drawings[k].priceA, pData->drawings[k].timeA, isAHigh, searchRangeBars); // ← ZMIANA
+                    } // ← ZMIANA
+
+                    // 2. Dopasowanie indeksu Punktu B z precyzyjnym wyszukaniem ceny (Search Range Bars) // ← ZMIANA
+                    int approxIdxB = sc.GetNearestMatchForSCDateTime(sc.ChartNumber, pData->drawings[k].timeB); // ← ZMIANA
+                    if (approxIdxB >= 0 && approxIdxB < sc.ArraySize) { // ← ZMIANA
+                        bool isBHigh = (fabs(sc.High[approxIdxB] - pData->drawings[k].priceB) < fabs(sc.Low[approxIdxB] - pData->drawings[k].priceB)); // ← ZMIANA
+                        pData->drawings[k].idxB = FindBestMatchIndex(sc, pData->drawings[k].priceB, pData->drawings[k].timeB, isBHigh, searchRangeBars); // ← ZMIANA
+                    } // ← ZMIANA
 
                     // Automatyczne przeliczenie cen stref dla nowych indeksów czasowych dla wszystkich 10 poziomów
                     float pA = pData->drawings[k].priceA;
