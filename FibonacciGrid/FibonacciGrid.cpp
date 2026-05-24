@@ -45,6 +45,8 @@ struct FibonacciData {
     int LastLeftIdx;            // ← ZMIANA: Ostatni zapamiętany sc.IndexOfFirstVisibleBar (detekcja scrolla)
     FibonacciPreset presets[4]; // ← ZMIANA
     int activeConfig;           // ← ZMIANA
+    HFONT hCachedFont;          // ← ZMIANA: cache GDI font (tworzony raz, żyje z pData)
+    HPEN  hCachedDashPen;       // ← ZMIANA: cache GDI pen kropkowany
 };
 #pragma pack(pop)
 
@@ -413,15 +415,20 @@ void DrawFibonacciGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
     bool effectiveIsVisible = (sc.GetPersistentInt(5) == 1);
     if (!effectiveIsVisible) return;
 
-// Kapsułkowanie zasobów GDI - Tworzenie systemowych piór graficznych Windows
-HPEN hDashPen = ::CreatePen(PS_DOT, 1, RGB(0, 0, 255));  // Kropkowane (Blue) dla kotwicy i podglądu
-    HPEN hSolidPen = ::CreatePen(PS_SOLID, 1, RGB(255, 140, 0)); // Ciągłe pomarańczowe dla stref siatki
+// Kapsułkowanie zasobów GDI - Lazy-init piór i czcionki (cached w pData, żyją przez cały cykl życia wskaźnika)
+    if (!pData->hCachedDashPen) { // ← ZMIANA: tworzone tylko raz
+        pData->hCachedDashPen = ::CreatePen(PS_DOT, 1, RGB(0, 0, 255));
+    }
+    // hSolidPen usunięty — był dead code (nigdy nie SelectObject'd do DC) // ← ZMIANA
+    HPEN hDashPen = pData->hCachedDashPen; // ← ZMIANA: alias lokalny
     HPEN hOldPen = (HPEN)::SelectObject(hDC, hDashPen);
 
-    // Wdrożona prawidłowo, pojedyncza systemowa czcionka Arial Bold 8
-    HFONT hFont = ::CreateFontA(12, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, 
-                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, 
-                                DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
+    if (!pData->hCachedFont) { // ← ZMIANA: tworzone tylko raz
+        pData->hCachedFont = ::CreateFontA(12, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                           DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
+    }
+    HFONT hFont = pData->hCachedFont; // ← ZMIANA: alias lokalny
     HFONT hOldFont = (HFONT)::SelectObject(hDC, hFont); // Wstrzyknięcie czcionki do potoku renderera Windows
     COLORREF hOldTextColor = ::GetTextColor(hDC); // ← ZMIANA: zapis koloru tekstu DC (zakres funkcji)
     int      hOldBkMode    = ::GetBkMode(hDC);    // ← ZMIANA: zapis trybu tła DC (zakres funkcji)
@@ -473,13 +480,16 @@ int aIdx = pData->drawings[activeSlot].idxA;
 
 
 // 2. LOGIKA RENDEROWANIA ZAMROŻONYCH SIATEK - ETAP 2 (Odczyt geometrii w locie z linii natywnej)
+    ::SetBkMode(hDC, TRANSPARENT);     // ← ZMIANA: raz przed pętlą, nie limit-razy
+    ::SetTextAlign(hDC, TA_NOUPDATECP); // ← ZMIANA
+    int minBarThreshold = sc.Input[9].GetInt(); // ← ZMIANA: hoist przed pętlą
     int limit = min(pData->numSaved, 30);
     for (int k = 0; k < limit; k++) {
         SavedGrid& grid = pData->drawings[k];
-        
+
         // PIERWSZE ZADANIE: Bezpieczny warunek renderowania oparty na cenach (zapobiega pomijaniu odczytu z dysku)
         if (grid.priceA == 0.0f || grid.priceB == 0.0f) continue;
-        if (abs(grid.idxB - grid.idxA) < sc.Input[9].GetInt()) { // ← ZMIANA: Min Bars Visibility Threshold
+        if (abs(grid.idxB - grid.idxA) < minBarThreshold) { // ← ZMIANA: Min Bars Visibility Threshold
             if (grid.lineNumber != 0)
                 sc.DeleteACSChartDrawing(sc.ChartNumber, 0, grid.lineNumber); // ← ZMIANA: usunięcie natywnego spine poniżej progu
             continue;
@@ -532,9 +542,6 @@ float tmpCalcPrices[10];
             ::MoveToEx(hDC, xA, yA, NULL);
             ::LineTo(hDC, xB, yB);
         }
-
-        ::SetBkMode(hDC, TRANSPARENT);
-        ::SetTextAlign(hDC, TA_NOUPDATECP);
 
         for (int i = 0; i < 10; i++) {
             if (!grid.customUse[i]) continue; // RESTRYKCJA ERGONOMII: Ukrywanie linii wyłączonych w Menu
@@ -604,18 +611,11 @@ int currentLineWidth = (i == 0 || i == 9) ? 2 : 1;
 
 
 
-// Bezpieczne czyszczenie i uwalnianie uchwytów jądra Windows GDI (Zapobieganie GDI Leaks)
-
-
-
-
-// Bezpieczne czyszczenie i uwalnianie uchwytów jądra Windows GDI (Zapobieganie GDI Leaks)
-    ::SelectObject(hDC, hOldPen); // ← Przywrócenie oryginalnego pióra DC — deselektuje ostatnie pióro z puli
+// Bezpieczne czyszczenie uchwytów GDI (Zapobieganie GDI Leaks)
+    ::SelectObject(hDC, hOldPen);  // ← Przywrócenie oryginalnego pióra DC — deselektuje ostatnie pióro z puli
     for (int p = 0; p < penCacheCount; p++) ::DeleteObject(penCache[p].pen); // ← ZMIANA: jednorazowe czyszczenie całej puli
     ::SelectObject(hDC, hOldFont); // Przywrócenie domyślnej czcionki platformy Sierra Chart
-    ::DeleteObject(hDashPen);
-    ::DeleteObject(hSolidPen);
-    ::DeleteObject(hFont);         // BEZPIECZEŃSTWO: Fizyczne usunięcie czcionki z jądra OS Windows
+    // hDashPen, hFont — cached w pData, kasowane w LastCallToFunction // ← ZMIANA
     ::SetBkMode(hDC, hOldBkMode);        // ← ZMIANA: przywrócenie trybu tła (naprawa białej obramówki ceny)
     ::SetTextColor(hDC, hOldTextColor);  // ← ZMIANA: przywrócenie koloru tekstu
     ::SetTextAlign(hDC, hOldTextAlign);  // ← ZMIANA: przywrócenie wyrównania tekstu
@@ -758,7 +758,9 @@ if (pData == NULL) {
                 pData->DraggingIdx = -1;
                 pData->DraggedPoint = 0;
                 pData->SelectedIdx = -1;
-                pData->LastLeftIdx = -1; // ← ZMIANA
+                pData->LastLeftIdx = -1;   // ← ZMIANA
+                pData->hCachedFont    = NULL; // ← ZMIANA: runtime handle nieważny po restarcie — wymuszenie lazy-init
+                pData->hCachedDashPen = NULL; // ← ZMIANA
             }
 
             // ← ZMIANA: Globalny plik presetów nadpisuje presety — zawsze wygrywa nad per-chart .dat
@@ -777,8 +779,10 @@ if (pData == NULL) {
     }
 
     // 3. CZYSZCZENIE PAMIĘCI RAM PRZY USUWANIU WSKAŹNIKA
-    if (sc.LastCallToFunction) { 
+    if (sc.LastCallToFunction) {
         if (pData != NULL) {
+            if (pData->hCachedFont)    { ::DeleteObject(pData->hCachedFont);    } // ← ZMIANA: cleanup cached GDI font
+            if (pData->hCachedDashPen) { ::DeleteObject(pData->hCachedDashPen); } // ← ZMIANA: cleanup cached GDI pen
             sc.FreeMemory(pData);
             sc.SetPersistentPointer(500, NULL);
         }
@@ -1208,7 +1212,7 @@ else if (pData->TState == 2) {
 
 
 // 8. OBSŁUGA ZMIANY INTERWAŁÓW / REKALKULACJI (Wielobiektowy Timeframe Search Engine)
-    bool effectiveIsVisible = (sc.GetPersistentInt(5) == 1);
+    effectiveIsVisible = (sc.GetPersistentInt(5) == 1); // ← ZMIANA: shadow variable eliminated
 
     if (effectiveIsVisible) {
         // Jeśli podsystem wybudza się ze stanu ukrycia (-2), wymuszamy twarde otwarcie bramki obliczeniowej
