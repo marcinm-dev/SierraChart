@@ -683,13 +683,13 @@ if (pData == NULL) return;
     int AllDelBtn  = sc.Input[5].GetInt(); // ← ZMIANA
     int HideBtn    = sc.Input[7].GetInt(); // ← ZMIANA
 
-    // --- ETAP 3 HIDE: Most decyzyjny i osłona GPU (Slave Mode) ---
+// --- ETAP 3 HIDE: Most decyzyjny i osłona GPU (Slave Mode) ---
     if (sc.IsFullRecalculation) {
         pData->StabCounter = 10; // Amortyzacja na zimnym starcie
     }
 
     int currentGlobalHide = sc.GetPersistentIntFromChartStudy(sc.ChartNumber, 0, GLOBAL_SYNC_SLOT);
-    bool isSyncImpulse = (sc.Input[6].GetYesNo() && sc.MenuEventID == HideBtn); // ← ZMIANA
+    bool isSyncImpulse = (sc.Input[6].GetYesNo() && sc.MenuEventID == HideBtn);
     
     bool effectiveIsVisible = (currentGlobalHide == 0);
     if (isSyncImpulse) {
@@ -700,6 +700,24 @@ if (pData == NULL) return;
             pData->LastSyncValue = effectiveIsVisible ? 0 : 1; 
         }
     }
+
+    // ============================================================================================
+    // === MODYFIKACJA SEKCJI (ZMIANA ARCHITEKTONICZNA - PASYWNY MOST SYNCHRONIZACJI Z DINAPOLI) ===
+    // ============================================================================================
+    if (currentGlobalHide != pData->LastSyncValue) { 
+        pData->LastSyncValue = currentGlobalHide; 
+        pData->LastSize = -1; 
+        pData->StabCounter = 10; // Krótki impuls stabilizacji przy przełączaniu HIDE
+        
+        // WYMUSZENIE NATYCHMIASTOWEGO REPAINTU GDI OFFLINE PRZEZ AKTYWACJĘ GENERATORA BIĆ SERCA
+        sc.Subgraph[0][sc.ArraySize - 1] = (float)sc.ActiveToolYValue + 0.001f;
+    }
+
+    // Przeliczenie widoczności na podstawie zsynchronizowanego i wyrównanego rejestru cache RAM
+    effectiveIsVisible = (pData->LastSyncValue == 0);
+    // ============================================================================================
+    // === KONIEC MODYFIKACJI SEKCJI ==============================================================
+    // ============================================================================================
 
     // Most decyzyjny (Single Source of Truth) dla silnika GDI - Rejestracja w Slocie 5
     sc.SetPersistentInt(5, effectiveIsVisible ? 1 : 0);

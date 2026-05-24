@@ -4,7 +4,7 @@ FibonacciGrid draws a grid of up to 10 Fibonacci levels between two swing points
 
 ## Versions
 
-Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5`, `fibonaccigrid-v6`, `fibonaccigrid-v7`, `fibonaccigrid-v8`, `fibonaccigrid-v9`, `fibonaccigrid-v10`, `fibonaccigrid-v11`.
+Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5`, `fibonaccigrid-v6`, `fibonaccigrid-v7`, `fibonaccigrid-v8`, `fibonaccigrid-v9`, `fibonaccigrid-v10`, `fibonaccigrid-v11`, `fibonaccigrid-v12`.
 
 - **V3**: Base functionality: two-point Fibonacci grid.
 - **V4**: Wick snapping, buffer of several drawings and font fix.
@@ -15,3 +15,4 @@ Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5
 - **V9**: Dotted spine line and thicker border levels (0.000 and 1.000).
 - **V10**: Four configuration presets (FIB1-FIB4) with a global presets file.
 - **V11**: Snapping range as an input parameter.
+- **V12**: Passive HIDE bridge: the Slave follows the Master state.
