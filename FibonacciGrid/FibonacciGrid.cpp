@@ -173,51 +173,106 @@ case WM_CREATE: {
 
         SavedGrid* pGrid = pUD->pGrid; // ← ZMIANA: lokalny alias dla czytelności
 
-        // ← ZMIANA: Selektor konfiguracji — 5 radio buttonów w jednym wierszu u góry
+        // ← ZMIANA: Selektor konfiguracji — wiersz 1: C1-C4 wyśrodkowane, wiersz 2: Current wyśrodkowany
         ::CreateWindowA("BUTTON", "C1", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP,
-            5,   10, 45, 20, hWnd, (HMENU)(UINT_PTR)300, NULL, NULL);
+            45,  8, 45, 20, hWnd, (HMENU)(UINT_PTR)300, NULL, NULL);
         ::CreateWindowA("BUTTON", "C2", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-            53,  10, 45, 20, hWnd, (HMENU)(UINT_PTR)301, NULL, NULL);
+            100, 8, 45, 20, hWnd, (HMENU)(UINT_PTR)301, NULL, NULL);
         ::CreateWindowA("BUTTON", "C3", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-            101, 10, 45, 20, hWnd, (HMENU)(UINT_PTR)302, NULL, NULL);
+            155, 8, 45, 20, hWnd, (HMENU)(UINT_PTR)302, NULL, NULL);
         ::CreateWindowA("BUTTON", "C4", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-            149, 10, 45, 20, hWnd, (HMENU)(UINT_PTR)303, NULL, NULL);
-        HWND hCurr = ::CreateWindowA("BUTTON", "CURRENT", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-            198, 10, 62, 20, hWnd, (HMENU)(UINT_PTR)304, NULL, NULL);
-        ::SendMessageA(hCurr, BM_SETCHECK, BST_CHECKED, 0); // domyślnie CURRENT
+            210, 8, 45, 20, hWnd, (HMENU)(UINT_PTR)303, NULL, NULL);
+        HWND hCurr = ::CreateWindowA("BUTTON", "Current", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+            115, 33, 70, 20, hWnd, (HMENU)(UINT_PTR)304, NULL, NULL);
+        ::SendMessageA(hCurr, BM_SETCHECK, BST_CHECKED, 0); // domyślnie Current
 
 // Kompaktowa matryca rozmieszczenia kontrolek dla 10 poziomów — y przesunięte o +45 px
         for (int i = 0; i < 10; i++) {
             HWND hCheck = ::CreateWindowA("BUTTON", "", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                20, 60 + i * 25, 20, 20, hWnd, (HMENU)(UINT_PTR)(100 + i), NULL, NULL); // ← ZMIANA y
+                14, 76 + i * 25, 20, 20, hWnd, (HMENU)(UINT_PTR)(100 + i), NULL, NULL); // ← ZMIANA y 68→76, x 20→14
             SendMessageA(hCheck, BM_SETCHECK, pGrid->customUse[i] ? BST_CHECKED : BST_UNCHECKED, 0);
 
             char buf[32];
             sprintf(buf, "%g", pGrid->customRatios[i]);
-            ::CreateWindowA("EDIT", buf, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-                50, 60 + i * 25, 60, 20, hWnd, (HMENU)(UINT_PTR)(200 + i), NULL, NULL); // ← ZMIANA y
+            ::CreateWindowA("EDIT", buf, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_RIGHT | ES_AUTOHSCROLL,
+                48, 76 + i * 25, 92, 20, hWnd, (HMENU)(UINT_PTR)(200 + i), NULL, NULL); // ← ZMIANA y 68→76, x 50→48, w 80→92, ES_RIGHT
         }
 
-        // ← ZMIANA: Przycisk Nadpisz (disabled domyślnie — aktywny tylko dla C1-C4)
-        HWND hNadpisz = ::CreateWindowA("BUTTON", "Nadpisz Config", WS_CHILD | WS_VISIBLE,
-            10, 325, 105, 25, hWnd, (HMENU)(UINT_PTR)400, NULL, NULL);
+        // ← ZMIANA: Jeden rząd przycisków wyrównanych do siatki tabeli (gL=5, gR=290)
+        HWND hNadpisz = ::CreateWindowA("BUTTON", "Overwrite", WS_CHILD | WS_VISIBLE,
+            5, 331, 80, 25, hWnd, (HMENU)(UINT_PTR)400, NULL, NULL);
         ::EnableWindow(hNadpisz, FALSE);
 
-        // Przyciski OK / Cancel przesunięte w dół
-        ::CreateWindowA("BUTTON", "OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-            120, 325, 60, 25, hWnd, (HMENU)(UINT_PTR)IDOK, NULL, NULL); // ← ZMIANA y
+        ::CreateWindowA("BUTTON", "Reset", WS_CHILD | WS_VISIBLE,
+            90, 331, 60, 25, hWnd, (HMENU)(UINT_PTR)401, NULL, NULL);
+
         ::CreateWindowA("BUTTON", "Cancel", WS_CHILD | WS_VISIBLE,
-            190, 325, 60, 25, hWnd, (HMENU)(UINT_PTR)IDCANCEL, NULL, NULL); // ← ZMIANA y
+            155, 331, 65, 25, hWnd, (HMENU)(UINT_PTR)IDCANCEL, NULL, NULL);
+        ::CreateWindowA("BUTTON", "OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+            225, 331, 60, 25, hWnd, (HMENU)(UINT_PTR)IDOK, NULL, NULL);
         break;
     }
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = ::BeginPaint(hWnd, &ps);
-        if (pUD && pUD->pGrid) { // ← ZMIANA
-            // Próbki kwadratów koloru dla wszystkich 10 stref
+
+        // ← ZMIANA: Stałe geometrii tabeli
+        const int gL   = 5;    // lewa krawędź
+        const int gR   = 290;  // prawa krawędź
+        const int gT   = 56;   // górna krawędź (nagłówek)
+        const int gHdr = 74;   // dolna krawędź nagłówka / górna krawędź danych
+        const int gB   = gHdr + 10 * 25; // dolna krawędź (= 324)
+        const int col1 = 42;   // separator Use | Ratio
+        const int col2 = 148;  // separator Ratio | Color
+
+        // ← ZMIANA: Tło nagłówka kolumn (steel blue — dark theme accent)
+        HBRUSH hHdrBrush = ::CreateSolidBrush(RGB(52, 88, 148));
+        RECT rHdrFill = { gL, gT, gR, gHdr };
+        ::FillRect(hdc, &rHdrFill, hHdrBrush);
+        ::DeleteObject(hHdrBrush);
+
+        // ← ZMIANA: Siatka — obramowanie zewnętrzne, linie kolumn i wierszy (kolor widoczny na ciemnym tle)
+        HPEN hPenGrid = ::CreatePen(PS_SOLID, 1, RGB(78, 78, 98));
+        HPEN hOldPen  = (HPEN)::SelectObject(hdc, hPenGrid);
+
+        // Obramowanie zewnętrzne
+        ::MoveToEx(hdc, gL, gT, NULL); ::LineTo(hdc, gR, gT);
+        ::MoveToEx(hdc, gL, gB, NULL); ::LineTo(hdc, gR, gB);
+        ::MoveToEx(hdc, gL, gT, NULL); ::LineTo(hdc, gL, gB);
+        ::MoveToEx(hdc, gR, gT, NULL); ::LineTo(hdc, gR, gB);
+
+        // Linia pod nagłówkiem
+        ::MoveToEx(hdc, gL, gHdr, NULL); ::LineTo(hdc, gR, gHdr);
+
+        // Pionowe separatory kolumn
+        ::MoveToEx(hdc, col1, gT, NULL); ::LineTo(hdc, col1, gB);
+        ::MoveToEx(hdc, col2, gT, NULL); ::LineTo(hdc, col2, gB);
+
+        // Poziome linie między wierszami danych
+        for (int i = 1; i < 10; i++) {
+            int lineY = gHdr + i * 25;
+            ::MoveToEx(hdc, gL, lineY, NULL); ::LineTo(hdc, gR, lineY);
+        }
+
+        ::SelectObject(hdc, hOldPen);
+        ::DeleteObject(hPenGrid);
+
+        // ← ZMIANA: Tekst nagłówków kolumn — biały na steel blue, tło transparentne
+        ::SetBkMode(hdc, TRANSPARENT);
+        ::SetTextColor(hdc, RGB(235, 240, 255));
+        RECT rHdrUse   = { gL,   gT, col1, gHdr };
+        RECT rHdrRatio = { col1, gT, col2, gHdr };
+        RECT rHdrColor = { col2, gT, gR,   gHdr };
+        ::DrawTextA(hdc, "Use",   -1, &rHdrUse,   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        ::DrawTextA(hdc, "Ratio", -1, &rHdrRatio, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        ::DrawTextA(hdc, "Color", -1, &rHdrColor, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        ::SetTextColor(hdc, ::GetSysColor(COLOR_WINDOWTEXT)); // reset koloru tekstu
+
+        if (pUD && pUD->pGrid) {
+            // ← ZMIANA: Próbki koloru — wyśrodkowane w kolumnie Color
             for (int i = 0; i < 10; i++) {
-                HBRUSH hBrush = ::CreateSolidBrush(pUD->pGrid->customColors[i]); // ← ZMIANA
-                RECT r = { 205, 60 + i * 25, 235, 60 + i * 25 + 20 }; // ← ZMIANA y
+                HBRUSH hBrush = ::CreateSolidBrush(pUD->pGrid->customColors[i]);
+                RECT r = { 204, 76 + i * 25, 234, 76 + i * 25 + 20 }; // ← ZMIANA y 68→76, x wyśrodkowane w col2..gR
                 ::FillRect(hdc, &r, hBrush);
                 ::DeleteObject(hBrush);
             }
@@ -232,10 +287,10 @@ case WM_LBUTTONDOWN: {
         int mouseX = LOWORD(lParam);
         int mouseY = HIWORD(lParam);
 
-        // Hit-Testing: Sprawdzamy czy kursor znajduje się w horyzontalnych granicach kolumny kwadratów (X: 205 do 235)
-        if (mouseX >= 205 && mouseX <= 235) {
+        // Hit-Testing: kolumna Color x=204..234, wiersze y=76+i*25..76+i*25+20
+        if (mouseX >= 204 && mouseX <= 234) { // ← ZMIANA: x 195-225 → 204-234
             for (int i = 0; i < 10; i++) {
-                int yTop = 60 + i * 25; // ← ZMIANA y
+                int yTop = 76 + i * 25; // ← ZMIANA y 68→76
                 int yBottom = yTop + 20;
 
                 // Sprawdzamy pionowy przedział dla każdego z 10 poziomów
@@ -321,6 +376,43 @@ case WM_LBUTTONDOWN: {
             }
             // Modal zostaje otwarty
         }
+        // ← ZMIANA: RESET — przywraca hardkodowane defaults; dla C1-C4 zapisuje do pliku od razu
+        else if (wmId == 401) {
+            static const float defRatios[10]    = {0.000f,0.250f,0.382f,0.500f,0.618f,0.700f,0.786f,0.850f,0.886f,1.000f};
+            static const COLORREF defColors[10] = {
+                RGB(0,0,255), RGB(255,0,0), RGB(255,0,0), RGB(0,0,255), RGB(255,0,0),
+                RGB(0,0,0),   RGB(255,0,0), RGB(255,0,0), RGB(128,128,128), RGB(0,0,255)
+            };
+            static const int defUse[4][10] = {
+                {1,0,0,0,1,1,1,0,1,1},
+                {1,0,1,1,0,0,0,0,0,1},
+                {1,1,0,1,0,0,0,0,0,1},
+                {1,0,1,0,0,0,0,0,0,1},
+            };
+            int cfg    = pUD->selectedConfig;
+            int useCfg = (cfg >= 0 && cfg <= 3) ? cfg : 0;
+            for (int i = 0; i < 10; i++) {
+                ::SendMessageA(::GetDlgItem(hWnd, 100 + i), BM_SETCHECK,
+                    defUse[useCfg][i] ? BST_CHECKED : BST_UNCHECKED, 0);
+                char buf[32];
+                sprintf(buf, "%g", defRatios[i]);
+                ::SetWindowTextA(::GetDlgItem(hWnd, 200 + i), buf);
+                pGrid->customColors[i] = defColors[i];
+            }
+            if (cfg >= 0 && cfg <= 3) {
+                for (int i = 0; i < 10; i++) {
+                    pData->presets[cfg].use[i]    = defUse[cfg][i];
+                    pData->presets[cfg].ratios[i] = defRatios[i];
+                    pData->presets[cfg].colors[i] = defColors[i];
+                }
+                FILE* fp = fopen(pUD->presetsPath, "wb");
+                if (fp) {
+                    fwrite(pData->presets, sizeof(FibonacciPreset), 4, fp);
+                    fclose(fp);
+                }
+            }
+            ::InvalidateRect(hWnd, NULL, TRUE);
+        }
         else if (wmId == IDOK) {
             // Zrzucenie 10 rekordów z kontrolek Win32 do bufora RAM
             for (int i = 0; i < 10; i++) {
@@ -346,6 +438,7 @@ case WM_LBUTTONDOWN: {
 case WM_DESTROY:
         // NAPRAWA ETAPU 4: Usunięto PostQuitMessage(0) - to ono bezprawnie pożerało wątek główny jądra Sierra Chart!
         break;
+
     default:
         return ::DefWindowProcA(hWnd, message, wParam, lParam);
     }
@@ -377,7 +470,7 @@ void ShowModalConfig(HWND hParent, SavedGrid& grid, FibonacciData* pData, const 
     } // ← ZMIANA
 
 HWND hwndDlg = ::CreateWindowExA(WS_EX_DLGMODALFRAME, "FibGridConfigClass", "Properties (Config / 10 Levels)",
-        WS_POPUPWINDOW | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 300, 400, hParent, NULL, ::GetModuleHandleA(NULL), &userData); // ← ZMIANA: wc.hInstance → GetModuleHandleA (wc przeniesione do guard)
+        WS_POPUPWINDOW | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 320, 400, hParent, NULL, ::GetModuleHandleA(NULL), &userData); // ← ZMIANA: wc.hInstance → GetModuleHandleA (wc przeniesione do guard)
 
     if (!hwndDlg) return;
 
