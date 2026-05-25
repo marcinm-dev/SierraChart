@@ -21,12 +21,14 @@ struct SavedGrid {
     float customRatios[10];    // ETAP 3: Tablica rozszerzona do 10 stref
     COLORREF customColors[10]; // ETAP 3: Tablica rozszerzona do 10 stref
     int customUse[10];         // ETAP 3: Tablica rozszerzona do 10 stref
+    int customWidth[10];       // ← ZMIANA: Grubość linii per poziom (1-3)
 };
 
 struct FibonacciPreset {  // ← ZMIANA
     float ratios[10];
     COLORREF colors[10];
     int use[10];
+    int width[10];            // ← ZMIANA: Grubość linii per poziom (1-3)
 };
 
 struct FibonacciData {
@@ -179,16 +181,17 @@ case WM_CREATE: {
         SavedGrid* pGrid = pUD->pGrid; // ← ZMIANA: lokalny alias dla czytelności
 
         // ← ZMIANA: BS_GROUPBOX usunięty — zastąpiony flat panelem rysowanym w WM_PAINT
+        // ← ZMIANA: Current w=68, P1-P4 w=50; marginesy zewnętrzne 15px po obu stronach panelu (symetria)
         HWND hCurr = ::CreateWindowA("BUTTON", "Current", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP,
-            35, 347, 70, 20, hWnd, (HMENU)(UINT_PTR)304, NULL, NULL); // ← ZMIANA: y=382→347
+            30, 347, 68, 20, hWnd, (HMENU)(UINT_PTR)304, NULL, NULL);
         ::CreateWindowA("BUTTON", "P1", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-            110, 347, 55, 20, hWnd, (HMENU)(UINT_PTR)300, NULL, NULL); // ← ZMIANA
+            115, 347, 50, 20, hWnd, (HMENU)(UINT_PTR)300, NULL, NULL); // ← ZMIANA: x=111→115
         ::CreateWindowA("BUTTON", "P2", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-            170, 347, 55, 20, hWnd, (HMENU)(UINT_PTR)301, NULL, NULL); // ← ZMIANA
+            182, 347, 50, 20, hWnd, (HMENU)(UINT_PTR)301, NULL, NULL); // ← ZMIANA: x=174→182
         ::CreateWindowA("BUTTON", "P3", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-            230, 347, 55, 20, hWnd, (HMENU)(UINT_PTR)302, NULL, NULL); // ← ZMIANA
+            249, 347, 50, 20, hWnd, (HMENU)(UINT_PTR)302, NULL, NULL); // ← ZMIANA: x=237→249
         ::CreateWindowA("BUTTON", "P4", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-            290, 347, 55, 20, hWnd, (HMENU)(UINT_PTR)303, NULL, NULL); // ← ZMIANA
+            316, 347, 48, 20, hWnd, (HMENU)(UINT_PTR)303, NULL, NULL); // ← ZMIANA: x=316, w=48 (koniec x=364, nie zakrywa prawej krawędzi panelu)
         ::SendMessageA(hCurr, BM_SETCHECK, BST_CHECKED, 0); // domyślnie Current
 
 // ← ZMIANA: Tabela od gT=10; checkbox wyśrodkowany w Use(15..60), Edit wyśrodkowany w Ratio(60..215)
@@ -199,17 +202,24 @@ case WM_CREATE: {
 
             char buf[32];
             sprintf(buf, "%g", pGrid->customRatios[i]);
-            ::CreateWindowA("EDIT", buf, WS_CHILD | WS_VISIBLE | ES_CENTER | ES_AUTOHSCROLL, // ← ZMIANA: WS_BORDER usunięty — borderless na pergaminie
-                100, 37 + i * 26 + 3, 75, 20, hWnd, (HMENU)(UINT_PTR)(200 + i), NULL, NULL); // ← ZMIANA
+            ::CreateWindowA("EDIT", buf, WS_CHILD | WS_VISIBLE | ES_RIGHT | ES_AUTOHSCROLL, // ← ZMIANA: ES_CENTER→ES_RIGHT (wyrównanie liczb do prawej)
+                100, 37 + i * 26 + 3, 58, 20, hWnd, (HMENU)(UINT_PTR)(200 + i), NULL, NULL); // ← ZMIANA: w=75→58 (mieści się w col1..col2=165)
+
+            char wbuf[4];
+            int w = pGrid->customWidth[i];
+            sprintf(wbuf, "%d", (w >= 1 && w <= 3) ? w : 1);
+            ::CreateWindowA("EDIT", wbuf, WS_CHILD | WS_VISIBLE | ES_CENTER | ES_NUMBER, // ← ZMIANA: kolumna Width
+                175, 37 + i * 26 + 3, 65, 20, hWnd, (HMENU)(UINT_PTR)(210 + i), NULL, NULL); // ← ZMIANA: x=175,w=65 — wyśrodkowany w col2(165)..col3(250)
         }
 
         // ← ZMIANA: Flat buttons — BS_OWNERDRAW; rysowanie przez WM_DRAWITEM
-        HWND hNadpisz = ::CreateWindowA("BUTTON", "Overwrite", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-            15, 390, 76, 25, hWnd, (HMENU)(UINT_PTR)400, NULL, NULL);
-        ::EnableWindow(hNadpisz, FALSE);
-
+        // ← ZMIANA: Reset na x=15 (pierwsza akcja), Overwrite na x=106 (rzadziej używane)
         ::CreateWindowA("BUTTON", "Reset", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-            106, 390, 76, 25, hWnd, (HMENU)(UINT_PTR)401, NULL, NULL);
+            15, 390, 76, 25, hWnd, (HMENU)(UINT_PTR)401, NULL, NULL);
+
+        HWND hNadpisz = ::CreateWindowA("BUTTON", "Overwrite", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+            106, 390, 76, 25, hWnd, (HMENU)(UINT_PTR)400, NULL, NULL);
+        ::EnableWindow(hNadpisz, FALSE);
 
         ::CreateWindowA("BUTTON", "Cancel", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
             197, 390, 76, 25, hWnd, (HMENU)(UINT_PTR)IDCANCEL, NULL, NULL);
@@ -225,7 +235,7 @@ case WM_CREATE: {
             CLEARTYPE_QUALITY, VARIABLE_PITCH | FF_SWISS, "Segoe UI");
         pUD->hBrushParchment = ::CreateSolidBrush(RGB(255, 255, 225));
         pUD->hBrushWhite     = ::CreateSolidBrush(RGB(255, 255, 255)); // ← ZMIANA: Zebra — czysta biel (nie szarość)
-        pUD->hBrushWindow    = ::CreateSolidBrush(RGB(245, 246, 248));
+        pUD->hBrushWindow    = ::CreateSolidBrush(RGB(240, 240, 240)); // ← ZMIANA: spójność z Sierra Chart
         if (pUD->hFont) {
             HWND hChild = ::GetWindow(hWnd, GW_CHILD);
             while (hChild) {
@@ -246,7 +256,8 @@ case WM_CREATE: {
         const int gHdr = 37;   // dolna krawędź nagłówka / górna krawędź danych (gT+22) // ← ZMIANA
         const int gB   = gHdr + 10 * 26; // dolna krawędź (= 297) // ← ZMIANA
         const int col1 = 60;   // separator Use | Ratio (gL+45)
-        const int col2 = 215;  // separator Ratio | Color (col1+155)
+        const int col2 = 165;  // ← ZMIANA: separator Ratio | Width (col1+105)
+        const int col3 = 250;  // ← ZMIANA: separator Width | Color (col2+85) — poszerzona kolumna Width
 
         // ← ZMIANA: Zebra — naprzemienne tło wierszy (pergamin / alabaster)
         if (pUD && pUD->hBrushParchment && pUD->hBrushWhite) {
@@ -279,6 +290,7 @@ case WM_CREATE: {
         // Pionowe separatory kolumn
         ::MoveToEx(hdc, col1, gT, NULL); ::LineTo(hdc, col1, gB);
         ::MoveToEx(hdc, col2, gT, NULL); ::LineTo(hdc, col2, gB);
+        ::MoveToEx(hdc, col3, gT, NULL); ::LineTo(hdc, col3, gB); // ← ZMIANA: separator Width | Color
 
         // Poziome linie między wierszami danych
         for (int i = 1; i < 10; i++) {
@@ -296,20 +308,30 @@ case WM_CREATE: {
             ? (HFONT)::SelectObject(hdc, (HGDIOBJ)pUD->hFontBold) : NULL;
         RECT rHdrUse   = { gL,   gT, col1, gHdr };
         RECT rHdrRatio = { col1, gT, col2, gHdr };
-        RECT rHdrColor = { col2, gT, gR,   gHdr };
+        RECT rHdrWidth = { col2, gT, col3, gHdr }; // ← ZMIANA: nowy nagłówek Width
+        RECT rHdrColor = { col3, gT, gR,   gHdr }; // ← ZMIANA: Color przesunięty na col3
         ::DrawTextA(hdc, "Use",   -1, &rHdrUse,   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         ::DrawTextA(hdc, "Ratio", -1, &rHdrRatio, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        ::DrawTextA(hdc, "Width", -1, &rHdrWidth, DT_CENTER | DT_VCENTER | DT_SINGLELINE); // ← ZMIANA
         ::DrawTextA(hdc, "Color", -1, &rHdrColor, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         if (hOldHdrFont) ::SelectObject(hdc, hOldHdrFont);
         ::SetTextColor(hdc, ::GetSysColor(COLOR_WINDOWTEXT)); // reset koloru tekstu
 
         if (pUD && pUD->pGrid) {
-            // ← ZMIANA: Próbki koloru — wyśrodkowane w kolumnie Color
+            // ← ZMIANA: Próbki koloru — przesunięte do kolumny col3..gR (230..365), swatch 50px wyśrodkowany
             for (int i = 0; i < 10; i++) {
                 HBRUSH hBrush = ::CreateSolidBrush(pUD->pGrid->customColors[i]);
-                RECT r = { 265, 37 + i * 26 + 3, 315, 37 + i * 26 + 23 }; // ← ZMIANA: 50px, centrum col2..gR=290
+                RECT r = { 282, 37 + i * 26 + 3, 332, 37 + i * 26 + 23 }; // ← ZMIANA: centrum kolumny 250..365 (32px margines po każdej stronie)
                 ::FillRect(hdc, &r, hBrush);
                 ::DeleteObject(hBrush);
+                // ← ZMIANA: 1px ciemna ramka wokół swatcha — widoczność jasnych kolorów (np. biały)
+                HPEN hPenFrame = ::CreatePen(PS_SOLID, 1, RGB(100, 102, 112));
+                HPEN hOldPenF  = (HPEN)::SelectObject(hdc, hPenFrame);
+                HBRUSH hOldBrF = (HBRUSH)::SelectObject(hdc, ::GetStockObject(NULL_BRUSH));
+                ::Rectangle(hdc, r.left, r.top, r.right, r.bottom);
+                ::SelectObject(hdc, hOldPenF);
+                ::SelectObject(hdc, hOldBrF);
+                ::DeleteObject(hPenFrame);
             }
         }
         // ← ZMIANA: Flat panel profili — zastępuje BS_GROUPBOX; rysowany pod radio buttonami
@@ -323,14 +345,16 @@ case WM_CREATE: {
             ::SelectObject(hdc, hOP);
             ::DeleteObject(hPP);
             if (pUD && pUD->hBrushWindow) {            // wycięcie krawędzi dla tytułu
-                RECT rCut = { 24, 329, 196, 342 };
+                // ← ZMIANA: cutout wyśrodkowany w panelu (15..365), centrum x=190, szer.~176px
+                // Lewa linia widoczna: x=15..102, prawa: x=278..365 — obramowanie dochodzi do tekstu z obu stron
+                RECT rCut = { 102, 329, 278, 342 };
                 ::FillRect(hdc, &rCut, pUD->hBrushWindow);
             }
             ::SetBkMode(hdc, TRANSPARENT);
             ::SetTextColor(hdc, RGB(100, 102, 112));
-            RECT rTitle = { 27, 328, 194, 342 };
+            RECT rTitle = { 102, 328, 278, 342 }; // ← ZMIANA: wyśrodkowany, centrum x=190
             ::DrawTextA(hdc, "Active Profile & Storage", -1, &rTitle,
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             ::SetTextColor(hdc, ::GetSysColor(COLOR_WINDOWTEXT));
         }
         ::EndPaint(hWnd, &ps);
@@ -353,8 +377,12 @@ case WM_CREATE: {
         if (pUD) {
             int ctrlId = ::GetDlgCtrlID((HWND)lParam);
             HDC hdcCtrl = (HDC)wParam;
-            if (ctrlId >= 200 && ctrlId <= 209) {
-                bool isEven = ((ctrlId - 200) % 2 == 0);
+            // Obsługa Ratio (200-209) i Width (210-219) — ta sama logika zebry
+            int rowIdx = -1;
+            if (ctrlId >= 200 && ctrlId <= 209) rowIdx = ctrlId - 200;
+            else if (ctrlId >= 210 && ctrlId <= 219) rowIdx = ctrlId - 210; // ← ZMIANA: Width
+            if (rowIdx >= 0) {
+                bool isEven = (rowIdx % 2 == 0);
                 if (isEven && pUD->hBrushParchment) {
                     ::SetBkColor(hdcCtrl, RGB(255, 255, 225));
                     ::SetTextColor(hdcCtrl, RGB(40, 40, 50));
@@ -387,7 +415,7 @@ case WM_CREATE: {
                 }
             }
             if (pUD->hBrushWindow) {
-                ::SetBkColor(hdcCtrl, RGB(245, 246, 248));
+                ::SetBkColor(hdcCtrl, RGB(240, 240, 240)); // ← ZMIANA: spójność z tłem okna
                 ::SetTextColor(hdcCtrl, RGB(40, 40, 50));
                 return (LRESULT)pUD->hBrushWindow;
             }
@@ -454,8 +482,8 @@ case WM_LBUTTONDOWN: {
         int mouseX = LOWORD(lParam);
         int mouseY = HIWORD(lParam);
 
-        // Hit-Testing: kolumna Color x=265..315, wiersze y=32+i*26+3..+23 // ← ZMIANA
-        if (mouseX >= 265 && mouseX <= 315) { // ← ZMIANA: 50px hit area, centrum 290
+        // Hit-Testing: kolumna Color x=272..322, wiersze y=37+i*26+3..+23 // ← ZMIANA: nowa pozycja swatch
+        if (mouseX >= 282 && mouseX <= 332) { // ← ZMIANA: centrum kolumny col3(250)..gR(365)
             for (int i = 0; i < 10; i++) {
                 int yTop = 37 + i * 26 + 3; // ← ZMIANA
                 int yBottom = yTop + 20;
@@ -506,6 +534,11 @@ case WM_LBUTTONDOWN: {
                 sprintf(buf, "%g", pData->presets[cfg].ratios[i]);
                 ::SetWindowTextA(::GetDlgItem(hWnd, 200 + i), buf);
                 pGrid->customColors[i] = pData->presets[cfg].colors[i];
+                // ← ZMIANA: Załadowanie Width z presetu
+                char wbuf[4];
+                int pw = pData->presets[cfg].width[i];
+                sprintf(wbuf, "%d", (pw >= 1 && pw <= 3) ? pw : 1);
+                ::SetWindowTextA(::GetDlgItem(hWnd, 210 + i), wbuf);
             }
             ::InvalidateRect(hWnd, NULL, TRUE);
         }
@@ -520,6 +553,11 @@ case WM_LBUTTONDOWN: {
                 sprintf(buf, "%g", pUD->original.customRatios[i]);
                 ::SetWindowTextA(::GetDlgItem(hWnd, 200 + i), buf);
                 pGrid->customColors[i] = pUD->original.customColors[i];
+                // ← ZMIANA: Przywrócenie Width z snapshotu
+                char wbuf[4];
+                int ow = pUD->original.customWidth[i];
+                sprintf(wbuf, "%d", (ow >= 1 && ow <= 3) ? ow : 1);
+                ::SetWindowTextA(::GetDlgItem(hWnd, 210 + i), wbuf);
             }
             ::InvalidateRect(hWnd, NULL, TRUE);
         }
@@ -533,6 +571,12 @@ case WM_LBUTTONDOWN: {
                     ::GetWindowTextA(::GetDlgItem(hWnd, 200 + i), buf, 64);
                     pData->presets[cfg].ratios[i] = (float)atof(buf);
                     pData->presets[cfg].colors[i] = pGrid->customColors[i];
+                    // ← ZMIANA: Zapis Width do presetu
+                    char wbuf[8];
+                    ::GetWindowTextA(::GetDlgItem(hWnd, 210 + i), wbuf, 8);
+                    int pw = atoi(wbuf);
+                    if (pw < 1) pw = 1; if (pw > 3) pw = 3;
+                    pData->presets[cfg].width[i] = pw;
                 }
                 // ← ZMIANA: Utrwalenie wszystkich 4 presetów do globalnego pliku
                 FILE* fp = fopen(pUD->presetsPath, "wb");
@@ -565,12 +609,16 @@ case WM_LBUTTONDOWN: {
                 sprintf(buf, "%g", defRatios[i]);
                 ::SetWindowTextA(::GetDlgItem(hWnd, 200 + i), buf);
                 pGrid->customColors[i] = defColors[i];
+                char wResetBuf[4];
+                sprintf(wResetBuf, "%d", (i == 0 || i == 9) ? 2 : 1);
+                ::SetWindowTextA(::GetDlgItem(hWnd, 210 + i), wResetBuf); // ← ZMIANA: 0.000 i 1.000 → width=2
             }
             if (cfg >= 0 && cfg <= 3) {
                 for (int i = 0; i < 10; i++) {
                     pData->presets[cfg].use[i]    = defUse[cfg][i];
                     pData->presets[cfg].ratios[i] = defRatios[i];
                     pData->presets[cfg].colors[i] = defColors[i];
+                    pData->presets[cfg].width[i]  = (i == 0 || i == 9) ? 2 : 1; // ← ZMIANA: 0.000 i 1.000 → width=2
                 }
                 FILE* fp = fopen(pUD->presetsPath, "wb");
                 if (fp) {
@@ -590,6 +638,13 @@ case WM_LBUTTONDOWN: {
                 char buf[64];
                 ::GetWindowTextA(hEdit, buf, 64);
                 pGrid->customRatios[i] = (float)atof(buf);
+
+                // ← ZMIANA: Odczyt Width i zapis do rysunku
+                char wbuf[8];
+                ::GetWindowTextA(::GetDlgItem(hWnd, 210 + i), wbuf, 8);
+                int w = atoi(wbuf);
+                if (w < 1) w = 1; if (w > 3) w = 3;
+                pGrid->customWidth[i] = w;
             }
             ::DestroyWindow(hWnd);
         }
@@ -813,8 +868,8 @@ float tmpCalcPrices[10];
             int yLevel = sc.RegionValueToYPixelCoordinate(tmpCalcPrices[i], sc.GraphRegion);
             if (yLevel <= 0) continue;
 
-// Dynamiczne wyznaczenie grubości (poziomy bazowe 0.000 i 1.000 otrzymują grubość 2, reszta 1)
-int currentLineWidth = (i == 0 || i == 9) ? 2 : 1;
+// ← ZMIANA: Grubość z customWidth (per poziom, zakres 1-3); fallback do 1 dla zerowych wartości (stare pliki)
+int currentLineWidth = (grid.customWidth[i] >= 1 && grid.customWidth[i] <= 3) ? grid.customWidth[i] : 1;
 
             // ← ZMIANA: Lookup w puli — pióro tworzone tylko raz per unikalna para (kolor, grubość)
             HPEN hCustomPen = NULL; // ← ZMIANA
@@ -997,6 +1052,7 @@ if (pData == NULL) {
                         pData->presets[p].ratios[i] = defRatios[i];
                         pData->presets[p].colors[i] = defColors[i];
                         pData->presets[p].use[i]    = defUsePtrs[p][i]; // ← ZMIANA
+                        pData->presets[p].width[i]  = (i == 0 || i == 9) ? 2 : 1; // ← ZMIANA: poziomy 0.000 i 1.000 grubsze
                     }
                 }
                 pData->activeConfig = 0;
@@ -1419,6 +1475,7 @@ else if (pData->TState == 2) {
                         pData->drawings[activeSlot].customRatios[i] = pData->presets[cfg].ratios[i];
                         pData->drawings[activeSlot].customColors[i] = pData->presets[cfg].colors[i];
                         pData->drawings[activeSlot].customUse[i]    = pData->presets[cfg].use[i];
+                        pData->drawings[activeSlot].customWidth[i]  = pData->presets[cfg].width[i]; // ← ZMIANA
                     }
 
                     pData->drawings[activeSlot].lineNumber = ApplySpineLine(sc, 0, // ← ZMIANA: 0 = nowa linia, zwraca przydzielony lineNumber

@@ -4,7 +4,7 @@ FibonacciGrid draws a grid of up to 10 Fibonacci levels between two swing points
 
 ## Versions
 
-Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5`, `fibonaccigrid-v6`, `fibonaccigrid-v7`, `fibonaccigrid-v8`, `fibonaccigrid-v9`, `fibonaccigrid-v10`, `fibonaccigrid-v11`, `fibonaccigrid-v12`, `fibonaccigrid-v13`, `fibonaccigrid-v14`, `fibonaccigrid-v16`, `fibonaccigrid-v17`, `fibonaccigrid-v18`, `fibonaccigrid-v19`, `fibonaccigrid-v20`, `fibonaccigrid-v21`.
+Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5`, `fibonaccigrid-v6`, `fibonaccigrid-v7`, `fibonaccigrid-v8`, `fibonaccigrid-v9`, `fibonaccigrid-v10`, `fibonaccigrid-v11`, `fibonaccigrid-v12`, `fibonaccigrid-v13`, `fibonaccigrid-v14`, `fibonaccigrid-v16`, `fibonaccigrid-v17`, `fibonaccigrid-v18`, `fibonaccigrid-v19`, `fibonaccigrid-v20`, `fibonaccigrid-v21`, `fibonaccigrid-v22`.
 
 - **V3**: Base functionality: two-point Fibonacci grid.
 - **V4**: Wick snapping, buffer of several drawings and font fix.
@@ -24,3 +24,4 @@ Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5
 - **V19**: Remove the double-drawn spine line.
 - **V20**: Settings window: table grid and Reset button.
 - **V21**: Settings window: Light Mode, zebra rows and flat buttons.
+- **V22**: Per-level line width column in the settings window.
