@@ -26,3 +26,9 @@ Versions are git tags: `fibonaccigrid-v3`, `fibonaccigrid-v4`, `fibonaccigrid-v5
 - **V21**: Settings window: Light Mode, zebra rows and flat buttons.
 - **V22**: Per-level line width column in the settings window.
 - **V23**: Spine colour input, maximum drawings input, ring-buffer wrap fix and GDI leak fixes.
+
+## Notes
+
+- The version numbers are the number of the author's working session. There is no code for V1 and V2: the first saved snapshot is V3, and V2 was only a plan. V15 has no separate snapshot either; its changes were saved together with V16.
+- V3 still carries the original name `FibonacciRetracement` inside the code. The study is called `FibonacciGrid` from V4 on.
+- The history was added to this repository later, from the author's own notes. The commit date of each version is the date on which that code snapshot was saved (US Eastern time), not the day it was uploaded. The code is copied unchanged, including the Polish comments.
