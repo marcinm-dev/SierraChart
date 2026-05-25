@@ -159,6 +159,11 @@ struct ModalUserData {
     SavedGrid      original;       // snapshot przy otwarciu — dla Cancel i CURRENT
     int            selectedConfig; // 0-3 = Config 1-4,  4 = CURRENT
     char           presetsPath[512]; // ← ZMIANA: ścieżka do globalnego pliku presetów
+    HFONT          hFont;           // ← ZMIANA: Light Mode — Segoe UI
+    HFONT          hFontBold;       // ← ZMIANA: Antracyt header — Segoe UI Bold
+    HBRUSH         hBrushParchment; // ← ZMIANA: Light Mode — tło pól EDIT + checkboxów (nieparzyste wiersze)
+    HBRUSH         hBrushWhite;     // ← ZMIANA: Zebra — alabastrowe tło parzystych wierszy
+    HBRUSH         hBrushWindow;    // ← ZMIANA: Light Mode — tło okna + radio/GroupBox
 };
 
 LRESULT CALLBACK ModalConfigWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -173,66 +178,93 @@ case WM_CREATE: {
 
         SavedGrid* pGrid = pUD->pGrid; // ← ZMIANA: lokalny alias dla czytelności
 
-        // ← ZMIANA: Selektor konfiguracji — wiersz 1: C1-C4 wyśrodkowane, wiersz 2: Current wyśrodkowany
-        ::CreateWindowA("BUTTON", "C1", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP,
-            45,  8, 45, 20, hWnd, (HMENU)(UINT_PTR)300, NULL, NULL);
-        ::CreateWindowA("BUTTON", "C2", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-            100, 8, 45, 20, hWnd, (HMENU)(UINT_PTR)301, NULL, NULL);
-        ::CreateWindowA("BUTTON", "C3", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-            155, 8, 45, 20, hWnd, (HMENU)(UINT_PTR)302, NULL, NULL);
-        ::CreateWindowA("BUTTON", "C4", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-            210, 8, 45, 20, hWnd, (HMENU)(UINT_PTR)303, NULL, NULL);
-        HWND hCurr = ::CreateWindowA("BUTTON", "Current", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-            115, 33, 70, 20, hWnd, (HMENU)(UINT_PTR)304, NULL, NULL);
+        // ← ZMIANA: BS_GROUPBOX usunięty — zastąpiony flat panelem rysowanym w WM_PAINT
+        HWND hCurr = ::CreateWindowA("BUTTON", "Current", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP,
+            35, 347, 70, 20, hWnd, (HMENU)(UINT_PTR)304, NULL, NULL); // ← ZMIANA: y=382→347
+        ::CreateWindowA("BUTTON", "P1", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+            110, 347, 55, 20, hWnd, (HMENU)(UINT_PTR)300, NULL, NULL); // ← ZMIANA
+        ::CreateWindowA("BUTTON", "P2", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+            170, 347, 55, 20, hWnd, (HMENU)(UINT_PTR)301, NULL, NULL); // ← ZMIANA
+        ::CreateWindowA("BUTTON", "P3", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+            230, 347, 55, 20, hWnd, (HMENU)(UINT_PTR)302, NULL, NULL); // ← ZMIANA
+        ::CreateWindowA("BUTTON", "P4", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+            290, 347, 55, 20, hWnd, (HMENU)(UINT_PTR)303, NULL, NULL); // ← ZMIANA
         ::SendMessageA(hCurr, BM_SETCHECK, BST_CHECKED, 0); // domyślnie Current
 
-// Kompaktowa matryca rozmieszczenia kontrolek dla 10 poziomów — y przesunięte o +45 px
+// ← ZMIANA: Tabela od gT=10; checkbox wyśrodkowany w Use(15..60), Edit wyśrodkowany w Ratio(60..215)
         for (int i = 0; i < 10; i++) {
             HWND hCheck = ::CreateWindowA("BUTTON", "", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                14, 76 + i * 25, 20, 20, hWnd, (HMENU)(UINT_PTR)(100 + i), NULL, NULL); // ← ZMIANA y 68→76, x 20→14
+                31, 37 + i * 26 + 3, 20, 20, hWnd, (HMENU)(UINT_PTR)(100 + i), NULL, NULL); // ← ZMIANA: x=31 centruje 13px kwadrat w kolumnie Use
             SendMessageA(hCheck, BM_SETCHECK, pGrid->customUse[i] ? BST_CHECKED : BST_UNCHECKED, 0);
 
             char buf[32];
             sprintf(buf, "%g", pGrid->customRatios[i]);
-            ::CreateWindowA("EDIT", buf, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_RIGHT | ES_AUTOHSCROLL,
-                48, 76 + i * 25, 92, 20, hWnd, (HMENU)(UINT_PTR)(200 + i), NULL, NULL); // ← ZMIANA y 68→76, x 50→48, w 80→92, ES_RIGHT
+            ::CreateWindowA("EDIT", buf, WS_CHILD | WS_VISIBLE | ES_CENTER | ES_AUTOHSCROLL, // ← ZMIANA: WS_BORDER usunięty — borderless na pergaminie
+                100, 37 + i * 26 + 3, 75, 20, hWnd, (HMENU)(UINT_PTR)(200 + i), NULL, NULL); // ← ZMIANA
         }
 
-        // ← ZMIANA: Jeden rząd przycisków wyrównanych do siatki tabeli (gL=5, gR=290)
-        HWND hNadpisz = ::CreateWindowA("BUTTON", "Overwrite", WS_CHILD | WS_VISIBLE,
-            5, 331, 80, 25, hWnd, (HMENU)(UINT_PTR)400, NULL, NULL);
+        // ← ZMIANA: Flat buttons — BS_OWNERDRAW; rysowanie przez WM_DRAWITEM
+        HWND hNadpisz = ::CreateWindowA("BUTTON", "Overwrite", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+            15, 390, 76, 25, hWnd, (HMENU)(UINT_PTR)400, NULL, NULL);
         ::EnableWindow(hNadpisz, FALSE);
 
-        ::CreateWindowA("BUTTON", "Reset", WS_CHILD | WS_VISIBLE,
-            90, 331, 60, 25, hWnd, (HMENU)(UINT_PTR)401, NULL, NULL);
+        ::CreateWindowA("BUTTON", "Reset", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+            106, 390, 76, 25, hWnd, (HMENU)(UINT_PTR)401, NULL, NULL);
 
-        ::CreateWindowA("BUTTON", "Cancel", WS_CHILD | WS_VISIBLE,
-            155, 331, 65, 25, hWnd, (HMENU)(UINT_PTR)IDCANCEL, NULL, NULL);
-        ::CreateWindowA("BUTTON", "OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-            225, 331, 60, 25, hWnd, (HMENU)(UINT_PTR)IDOK, NULL, NULL);
+        ::CreateWindowA("BUTTON", "Cancel", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+            197, 390, 76, 25, hWnd, (HMENU)(UINT_PTR)IDCANCEL, NULL, NULL);
+        ::CreateWindowA("BUTTON", "OK", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+            288, 390, 76, 25, hWnd, (HMENU)(UINT_PTR)IDOK, NULL, NULL);
+
+        // ← ZMIANA: Light Mode — font Segoe UI + pędzle tła; persist przez cały czas życia okna
+        pUD->hFont     = ::CreateFontA(-15, 0, 0, 0, FW_NORMAL, 0, 0, 0,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, VARIABLE_PITCH | FF_SWISS, "Segoe UI");
+        pUD->hFontBold = ::CreateFontA(-15, 0, 0, 0, FW_BOLD, 0, 0, 0, // ← ZMIANA: Stalowy Niebieski — bold dla nagłówka
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, VARIABLE_PITCH | FF_SWISS, "Segoe UI");
+        pUD->hBrushParchment = ::CreateSolidBrush(RGB(255, 255, 225));
+        pUD->hBrushWhite     = ::CreateSolidBrush(RGB(255, 255, 255)); // ← ZMIANA: Zebra — czysta biel (nie szarość)
+        pUD->hBrushWindow    = ::CreateSolidBrush(RGB(245, 246, 248));
+        if (pUD->hFont) {
+            HWND hChild = ::GetWindow(hWnd, GW_CHILD);
+            while (hChild) {
+                ::SendMessageA(hChild, WM_SETFONT, (WPARAM)pUD->hFont, FALSE);
+                hChild = ::GetWindow(hChild, GW_HWNDNEXT);
+            }
+        }
         break;
     }
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = ::BeginPaint(hWnd, &ps);
 
-        // ← ZMIANA: Stałe geometrii tabeli
-        const int gL   = 5;    // lewa krawędź
-        const int gR   = 290;  // prawa krawędź
-        const int gT   = 56;   // górna krawędź (nagłówek)
-        const int gHdr = 74;   // dolna krawędź nagłówka / górna krawędź danych
-        const int gB   = gHdr + 10 * 25; // dolna krawędź (= 324)
-        const int col1 = 42;   // separator Use | Ratio
-        const int col2 = 148;  // separator Ratio | Color
+        // ← ZMIANA: Stałe geometrii tabeli — nowy layout 380×490
+        const int gL   = 15;   // lewa krawędź (margines 15px)
+        const int gR   = 365;  // prawa krawędź (gL+350)
+        const int gT   = 15;   // górna krawędź (nagłówek) // ← ZMIANA: 10→15 (margines od title bar)
+        const int gHdr = 37;   // dolna krawędź nagłówka / górna krawędź danych (gT+22) // ← ZMIANA
+        const int gB   = gHdr + 10 * 26; // dolna krawędź (= 297) // ← ZMIANA
+        const int col1 = 60;   // separator Use | Ratio (gL+45)
+        const int col2 = 215;  // separator Ratio | Color (col1+155)
 
-        // ← ZMIANA: Tło nagłówka kolumn (steel blue — dark theme accent)
+        // ← ZMIANA: Zebra — naprzemienne tło wierszy (pergamin / alabaster)
+        if (pUD && pUD->hBrushParchment && pUD->hBrushWhite) {
+            for (int i = 0; i < 10; i++) {
+                int yRow = gHdr + i * 26;
+                RECT rRow = { gL + 1, yRow, gR, yRow + 26 };
+                ::FillRect(hdc, &rRow, (i % 2 == 0) ? pUD->hBrushParchment : pUD->hBrushWhite);
+            }
+        }
+
+        // ← ZMIANA: Stalowy Niebieski header — spójność z liniami Fibo i węzłami na wykresie
         HBRUSH hHdrBrush = ::CreateSolidBrush(RGB(52, 88, 148));
         RECT rHdrFill = { gL, gT, gR, gHdr };
         ::FillRect(hdc, &rHdrFill, hHdrBrush);
         ::DeleteObject(hHdrBrush);
 
-        // ← ZMIANA: Siatka — obramowanie zewnętrzne, linie kolumn i wierszy (kolor widoczny na ciemnym tle)
-        HPEN hPenGrid = ::CreatePen(PS_SOLID, 1, RGB(78, 78, 98));
+        // ← ZMIANA: Light Mode — jasnoszare linie siatki
+        HPEN hPenGrid = ::CreatePen(PS_SOLID, 1, RGB(218, 222, 229));
         HPEN hOldPen  = (HPEN)::SelectObject(hdc, hPenGrid);
 
         // Obramowanie zewnętrzne
@@ -250,35 +282,170 @@ case WM_CREATE: {
 
         // Poziome linie między wierszami danych
         for (int i = 1; i < 10; i++) {
-            int lineY = gHdr + i * 25;
+            int lineY = gHdr + i * 26; // ← ZMIANA
             ::MoveToEx(hdc, gL, lineY, NULL); ::LineTo(hdc, gR, lineY);
         }
 
         ::SelectObject(hdc, hOldPen);
         ::DeleteObject(hPenGrid);
 
-        // ← ZMIANA: Tekst nagłówków kolumn — biały na steel blue, tło transparentne
+        // ← ZMIANA: Biały bold tekst nagłówków na antracycie
         ::SetBkMode(hdc, TRANSPARENT);
-        ::SetTextColor(hdc, RGB(235, 240, 255));
+        ::SetTextColor(hdc, RGB(255, 255, 255));
+        HFONT hOldHdrFont = (pUD && pUD->hFontBold)
+            ? (HFONT)::SelectObject(hdc, (HGDIOBJ)pUD->hFontBold) : NULL;
         RECT rHdrUse   = { gL,   gT, col1, gHdr };
         RECT rHdrRatio = { col1, gT, col2, gHdr };
         RECT rHdrColor = { col2, gT, gR,   gHdr };
         ::DrawTextA(hdc, "Use",   -1, &rHdrUse,   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         ::DrawTextA(hdc, "Ratio", -1, &rHdrRatio, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         ::DrawTextA(hdc, "Color", -1, &rHdrColor, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        if (hOldHdrFont) ::SelectObject(hdc, hOldHdrFont);
         ::SetTextColor(hdc, ::GetSysColor(COLOR_WINDOWTEXT)); // reset koloru tekstu
 
         if (pUD && pUD->pGrid) {
             // ← ZMIANA: Próbki koloru — wyśrodkowane w kolumnie Color
             for (int i = 0; i < 10; i++) {
                 HBRUSH hBrush = ::CreateSolidBrush(pUD->pGrid->customColors[i]);
-                RECT r = { 204, 76 + i * 25, 234, 76 + i * 25 + 20 }; // ← ZMIANA y 68→76, x wyśrodkowane w col2..gR
+                RECT r = { 265, 37 + i * 26 + 3, 315, 37 + i * 26 + 23 }; // ← ZMIANA: 50px, centrum col2..gR=290
                 ::FillRect(hdc, &r, hBrush);
                 ::DeleteObject(hBrush);
             }
         }
+        // ← ZMIANA: Flat panel profili — zastępuje BS_GROUPBOX; rysowany pod radio buttonami
+        {
+            HPEN hPP = ::CreatePen(PS_SOLID, 1, RGB(200, 202, 208));
+            HPEN hOP = (HPEN)::SelectObject(hdc, hPP);
+            ::MoveToEx(hdc, 15,  335, NULL); ::LineTo(hdc, 365, 335); // top
+            ::MoveToEx(hdc, 15,  375, NULL); ::LineTo(hdc, 365, 375); // bottom
+            ::MoveToEx(hdc, 15,  335, NULL); ::LineTo(hdc,  15, 375); // left
+            ::MoveToEx(hdc, 365, 335, NULL); ::LineTo(hdc, 365, 375); // right
+            ::SelectObject(hdc, hOP);
+            ::DeleteObject(hPP);
+            if (pUD && pUD->hBrushWindow) {            // wycięcie krawędzi dla tytułu
+                RECT rCut = { 24, 329, 196, 342 };
+                ::FillRect(hdc, &rCut, pUD->hBrushWindow);
+            }
+            ::SetBkMode(hdc, TRANSPARENT);
+            ::SetTextColor(hdc, RGB(100, 102, 112));
+            RECT rTitle = { 27, 328, 194, 342 };
+            ::DrawTextA(hdc, "Active Profile & Storage", -1, &rTitle,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            ::SetTextColor(hdc, ::GetSysColor(COLOR_WINDOWTEXT));
+        }
         ::EndPaint(hWnd, &ps);
         break;
+    }
+
+    // ← ZMIANA: Light Mode — tło okna zamiast systemowego szarego
+    case WM_ERASEBKGND: {
+        if (pUD && pUD->hBrushWindow) {
+            RECT rc;
+            ::GetClientRect(hWnd, &rc);
+            ::FillRect((HDC)wParam, &rc, pUD->hBrushWindow);
+            return 1;
+        }
+        return ::DefWindowProcA(hWnd, message, wParam, lParam);
+    }
+
+    // ← ZMIANA: Zebra — naprzemienne tło pól EDIT (pergamin/alabaster wg indeksu wiersza)
+    case WM_CTLCOLOREDIT: {
+        if (pUD) {
+            int ctrlId = ::GetDlgCtrlID((HWND)lParam);
+            HDC hdcCtrl = (HDC)wParam;
+            if (ctrlId >= 200 && ctrlId <= 209) {
+                bool isEven = ((ctrlId - 200) % 2 == 0);
+                if (isEven && pUD->hBrushParchment) {
+                    ::SetBkColor(hdcCtrl, RGB(255, 255, 225));
+                    ::SetTextColor(hdcCtrl, RGB(40, 40, 50));
+                    return (LRESULT)pUD->hBrushParchment;
+                } else if (!isEven && pUD->hBrushWhite) {
+                    ::SetBkColor(hdcCtrl, RGB(255, 255, 255));
+                    ::SetTextColor(hdcCtrl, RGB(40, 40, 50));
+                    return (LRESULT)pUD->hBrushWhite;
+                }
+            }
+        }
+        return ::DefWindowProcA(hWnd, message, wParam, lParam);
+    }
+
+    // ← ZMIANA: Zebra — tło checkboxów (pergamin/alabaster wg wiersza) i radio (tło okna)
+    case WM_CTLCOLORSTATIC: {
+        if (pUD) {
+            int ctrlId = ::GetDlgCtrlID((HWND)lParam);
+            HDC hdcCtrl = (HDC)wParam;
+            if (ctrlId >= 100 && ctrlId <= 109) {
+                bool isEven = ((ctrlId - 100) % 2 == 0);
+                if (isEven && pUD->hBrushParchment) {
+                    ::SetBkColor(hdcCtrl, RGB(255, 255, 225));
+                    ::SetTextColor(hdcCtrl, RGB(40, 40, 50));
+                    return (LRESULT)pUD->hBrushParchment;
+                } else if (!isEven && pUD->hBrushWhite) {
+                    ::SetBkColor(hdcCtrl, RGB(255, 255, 255));
+                    ::SetTextColor(hdcCtrl, RGB(40, 40, 50));
+                    return (LRESULT)pUD->hBrushWhite;
+                }
+            }
+            if (pUD->hBrushWindow) {
+                ::SetBkColor(hdcCtrl, RGB(245, 246, 248));
+                ::SetTextColor(hdcCtrl, RGB(40, 40, 50));
+                return (LRESULT)pUD->hBrushWindow;
+            }
+        }
+        return ::DefWindowProcA(hWnd, message, wParam, lParam);
+    }
+
+    // ← ZMIANA: Flat buttons — pełne własne renderowanie (brak 3D Win98)
+    case WM_DRAWITEM: {
+        DRAWITEMSTRUCT* pDIS = (DRAWITEMSTRUCT*)lParam;
+        if (!pDIS || pDIS->CtlType != ODT_BUTTON) break;
+        HDC  hdc = pDIS->hDC;
+        RECT rc  = pDIS->rcItem;
+        bool isDisabled = (pDIS->itemState & ODS_DISABLED) != 0;
+        bool isPressed  = (pDIS->itemState & ODS_SELECTED) != 0;
+        bool isOK       = (pDIS->CtlID == IDOK);
+
+        COLORREF bg, fg, border;
+        if (isDisabled) {
+            bg = RGB(235,237,242); fg = RGB(160,160,160); border = RGB(210,213,220);
+        } else if (isOK) {
+            bg     = isPressed ? RGB(35,65,120)  : RGB(52,88,148);
+            fg     = RGB(255,255,255);
+            border = RGB(35,65,120);
+        } else {
+            bg     = isPressed ? RGB(210,213,220) : RGB(235,237,242);
+            fg     = RGB(40,40,50);
+            border = RGB(190,193,200);
+        }
+
+        HBRUSH hBr = ::CreateSolidBrush(bg);
+        ::FillRect(hdc, &rc, hBr);
+        ::DeleteObject(hBr);
+
+        HPEN hPen = ::CreatePen(PS_SOLID, 1, border);
+        HPEN hOld = (HPEN)::SelectObject(hdc, hPen);
+        ::MoveToEx(hdc, rc.left,     rc.top,      NULL);
+        ::LineTo  (hdc, rc.right-1,  rc.top);
+        ::LineTo  (hdc, rc.right-1,  rc.bottom-1);
+        ::LineTo  (hdc, rc.left,     rc.bottom-1);
+        ::LineTo  (hdc, rc.left,     rc.top);
+        ::SelectObject(hdc, hOld);
+        ::DeleteObject(hPen);
+
+        char buf[64] = {};
+        ::GetWindowTextA(pDIS->hwndItem, buf, 63);
+        ::SetBkMode(hdc, TRANSPARENT);
+        ::SetTextColor(hdc, fg);
+        HFONT hOldFont = pUD && pUD->hFont
+            ? (HFONT)::SelectObject(hdc, (HGDIOBJ)pUD->hFont) : NULL;
+        ::DrawTextA(hdc, buf, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        if (hOldFont) ::SelectObject(hdc, hOldFont);
+
+        if (pDIS->itemState & ODS_FOCUS) {
+            RECT rf = { rc.left+3, rc.top+3, rc.right-4, rc.bottom-4 };
+            ::DrawFocusRect(hdc, &rf);
+        }
+        return TRUE;
     }
 
 case WM_LBUTTONDOWN: {
@@ -287,10 +454,10 @@ case WM_LBUTTONDOWN: {
         int mouseX = LOWORD(lParam);
         int mouseY = HIWORD(lParam);
 
-        // Hit-Testing: kolumna Color x=204..234, wiersze y=76+i*25..76+i*25+20
-        if (mouseX >= 204 && mouseX <= 234) { // ← ZMIANA: x 195-225 → 204-234
+        // Hit-Testing: kolumna Color x=265..315, wiersze y=32+i*26+3..+23 // ← ZMIANA
+        if (mouseX >= 265 && mouseX <= 315) { // ← ZMIANA: 50px hit area, centrum 290
             for (int i = 0; i < 10; i++) {
-                int yTop = 76 + i * 25; // ← ZMIANA y 68→76
+                int yTop = 37 + i * 26 + 3; // ← ZMIANA
                 int yBottom = yTop + 20;
 
                 // Sprawdzamy pionowy przedział dla każdego z 10 poziomów
@@ -437,6 +604,13 @@ case WM_LBUTTONDOWN: {
 
 case WM_DESTROY:
         // NAPRAWA ETAPU 4: Usunięto PostQuitMessage(0) - to ono bezprawnie pożerało wątek główny jądra Sierra Chart!
+        if (pUD) { // ← ZMIANA: Light Mode — zwolnienie zasobów GDI
+            if (pUD->hFont)           { ::DeleteObject(pUD->hFont);           pUD->hFont = NULL; }
+            if (pUD->hFontBold)       { ::DeleteObject(pUD->hFontBold);       pUD->hFontBold = NULL; }       // ← ZMIANA
+            if (pUD->hBrushParchment) { ::DeleteObject(pUD->hBrushParchment); pUD->hBrushParchment = NULL; }
+            if (pUD->hBrushWhite)     { ::DeleteObject(pUD->hBrushWhite);     pUD->hBrushWhite = NULL; }     // ← ZMIANA
+            if (pUD->hBrushWindow)    { ::DeleteObject(pUD->hBrushWindow);    pUD->hBrushWindow = NULL; }
+        }
         break;
 
     default:
@@ -457,6 +631,11 @@ void ShowModalConfig(HWND hParent, SavedGrid& grid, FibonacciData* pData, const 
     memcpy(&userData.original, &grid, sizeof(SavedGrid)); // snapshot dla Cancel/CURRENT
     strncpy(userData.presetsPath, presetsPath, 511); // ← ZMIANA
     userData.presetsPath[511] = '\0';               // ← ZMIANA
+    userData.hFont           = NULL;                // ← ZMIANA: init Light Mode handles
+    userData.hFontBold       = NULL;               // ← ZMIANA
+    userData.hBrushParchment = NULL;
+    userData.hBrushWhite     = NULL;               // ← ZMIANA
+    userData.hBrushWindow    = NULL;
 
     if (!classRegistered) { // ← ZMIANA: guard — rejestracja tylko przy pierwszym wywołaniu
         WNDCLASSA wc = {0};
@@ -470,7 +649,7 @@ void ShowModalConfig(HWND hParent, SavedGrid& grid, FibonacciData* pData, const 
     } // ← ZMIANA
 
 HWND hwndDlg = ::CreateWindowExA(WS_EX_DLGMODALFRAME, "FibGridConfigClass", "Properties (Config / 10 Levels)",
-        WS_POPUPWINDOW | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 320, 400, hParent, NULL, ::GetModuleHandleA(NULL), &userData); // ← ZMIANA: wc.hInstance → GetModuleHandleA (wc przeniesione do guard)
+        WS_POPUPWINDOW | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 400, 460, hParent, NULL, ::GetModuleHandleA(NULL), &userData); // ← ZMIANA: h=455→460 (gap GroupBox↔buttons +5px)
 
     if (!hwndDlg) return;
 
