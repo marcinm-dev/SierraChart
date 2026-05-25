@@ -47,8 +47,7 @@ struct FibonacciData {
     int LastLeftIdx;            // ← ZMIANA: Ostatni zapamiętany sc.IndexOfFirstVisibleBar (detekcja scrolla)
     FibonacciPreset presets[4]; // ← ZMIANA
     int activeConfig;           // ← ZMIANA
-    HFONT hCachedFont;          // ← ZMIANA: cache GDI font (tworzony raz, żyje z pData)
-    HPEN  hCachedDashPen;       // ← ZMIANA: cache GDI pen kropkowany
+    HFONT hCachedFont;          // cache GDI font (tworzony raz, żyje z pData)
 };
 #pragma pack(pop)
 
@@ -135,7 +134,7 @@ int ApplySpineLine(SCStudyInterfaceRef sc, int lineNumber, int idxA, float price
     SpineLine.BeginValue = priceA;
     SpineLine.EndIndex = idxB;
     SpineLine.EndValue = priceB;
-    SpineLine.Color = RGB(0, 0, 255);
+    SpineLine.Color = sc.Input[12].GetColor(); // ← ZMIANA: kolor z input
     SpineLine.LineStyle = LINESTYLE_DOT;
     SpineLine.LineWidth = 1;
     sc.UseTool(SpineLine);
@@ -743,12 +742,9 @@ void DrawFibonacciGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
     if (!effectiveIsVisible) return;
 
 // Kapsułkowanie zasobów GDI - Lazy-init piór i czcionki (cached w pData, żyją przez cały cykl życia wskaźnika)
-    if (!pData->hCachedDashPen) { // ← ZMIANA: tworzone tylko raz
-        pData->hCachedDashPen = ::CreatePen(PS_DOT, 1, RGB(0, 0, 255));
-    }
-    // hSolidPen usunięty — był dead code (nigdy nie SelectObject'd do DC) // ← ZMIANA
-    HPEN hDashPen = pData->hCachedDashPen; // ← ZMIANA: alias lokalny
-    HPEN hOldPen = (HPEN)::SelectObject(hDC, hDashPen);
+    const int maxD = max(1, min(sc.Input[13].GetInt(), 30)); // ← ZMIANA: konfigurowalna granica bufora kołowego
+    // ← ZMIANA: hCachedDashPen usunięty — był dead code (nigdy nie rysował, zastępowany przez hCustomPen z puli)
+    HPEN hOldPen = (HPEN)::GetCurrentObject(hDC, OBJ_PEN);
 
     if (!pData->hCachedFont) { // ← ZMIANA: tworzone tylko raz
         pData->hCachedFont = ::CreateFontA(12, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
@@ -763,11 +759,11 @@ void DrawFibonacciGDI(HWND hWnd, HDC hDC, SCStudyInterfaceRef sc) {
 
     // ← ZMIANA: GDI Pen Pool — pióra tworzone raz per unikalna para (kolor, grubość), reużywane w całej pętli siatek
     struct PenCacheEntry { COLORREF color; int width; HPEN pen; }; // ← ZMIANA
-    PenCacheEntry penCache[20]; // ← ZMIANA: maks. 20 unikalnych par (10 poziomów × 2 grubości)
+    PenCacheEntry penCache[30]; // maks. 30 unikalnych par (10 poziomów × 3 grubości)
     int penCacheCount = 0;      // ← ZMIANA
 
 // Matematyczne wyznaczenie indeksu aktualnie rysowanego obiektu w maszynie stanów
-    int activeSlot = pData->numSaved % 30;
+    int activeSlot = pData->numSaved % maxD;
 
 
 // 1. LOGIKA LIVE PREVIEW (Inteligentne, wymuszone przyciąganie horyzontalno-pionowe w locie)
@@ -810,7 +806,7 @@ int aIdx = pData->drawings[activeSlot].idxA;
     ::SetBkMode(hDC, TRANSPARENT);     // ← ZMIANA: raz przed pętlą, nie limit-razy
     ::SetTextAlign(hDC, TA_NOUPDATECP); // ← ZMIANA
     int minBarThreshold = sc.Input[9].GetInt(); // ← ZMIANA: hoist przed pętlą
-    int limit = min(pData->numSaved, 30);
+    int limit = min(pData->numSaved, maxD);
     for (int k = 0; k < limit; k++) {
         SavedGrid& grid = pData->drawings[k];
 
@@ -880,7 +876,7 @@ int currentLineWidth = (grid.customWidth[i] >= 1 && grid.customWidth[i] <= 3) ? 
             } // ← ZMIANA
             if (hCustomPen == NULL) { // ← ZMIANA: nowy kolor/grubość — tworzenie i rejestracja w puli
                 hCustomPen = ::CreatePen(PS_SOLID, currentLineWidth, grid.customColors[i]); // ← ZMIANA
-                if (penCacheCount < 20) { // ← ZMIANA
+                if (penCacheCount < 30) {
                     penCache[penCacheCount].color = grid.customColors[i]; // ← ZMIANA
                     penCache[penCacheCount].width = currentLineWidth;     // ← ZMIANA
                     penCache[penCacheCount].pen   = hCustomPen;           // ← ZMIANA
@@ -934,7 +930,7 @@ int currentLineWidth = (grid.customWidth[i] >= 1 && grid.customWidth[i] <= 3) ? 
     ::SelectObject(hDC, hOldPen);  // ← Przywrócenie oryginalnego pióra DC — deselektuje ostatnie pióro z puli
     for (int p = 0; p < penCacheCount; p++) ::DeleteObject(penCache[p].pen); // ← ZMIANA: jednorazowe czyszczenie całej puli
     ::SelectObject(hDC, hOldFont); // Przywrócenie domyślnej czcionki platformy Sierra Chart
-    // hDashPen, hFont — cached w pData, kasowane w LastCallToFunction // ← ZMIANA
+    // hFont — cached w pData, kasowany w LastCallToFunction
     ::SetBkMode(hDC, hOldBkMode);        // ← ZMIANA: przywrócenie trybu tła (naprawa białej obramówki ceny)
     ::SetTextColor(hDC, hOldTextColor);  // ← ZMIANA: przywrócenie koloru tekstu
     ::SetTextAlign(hDC, hOldTextAlign);  // ← ZMIANA: przywrócenie wyrównania tekstu
@@ -1009,6 +1005,12 @@ sc.p_GDIFunction = DrawFibonacciGDI;
         sc.Input[11].Name = "GPU Safe-Lock Frames (Offline)"; // ← ZMIANA
         sc.Input[11].SetInt(10);                              // ← ZMIANA
 
+        sc.Input[12].Name = "Spine Color"; // ← ZMIANA
+        sc.Input[12].SetColor(RGB(0, 0, 255)); // ← ZMIANA
+
+        sc.Input[13].Name = "Max Rysunkow (1-30)"; // ← ZMIANA
+        sc.Input[13].SetInt(30);                    // ← ZMIANA
+
         // Nadanie nazw przyciskom na pasku na podstawie dynamicznych wartości z menu ustawień
         sc.SetCustomStudyControlBarButtonText(sc.Input[0].GetInt(), "FIB 1"); // ← ZMIANA
         sc.SetCustomStudyControlBarButtonText(sc.Input[1].GetInt(), "FIB 2"); // ← ZMIANA
@@ -1079,8 +1081,7 @@ if (pData == NULL) {
                 pData->DraggedPoint = 0;
                 pData->SelectedIdx = -1;
                 pData->LastLeftIdx = -1;   // ← ZMIANA
-                pData->hCachedFont    = NULL; // ← ZMIANA: runtime handle nieważny po restarcie — wymuszenie lazy-init
-                pData->hCachedDashPen = NULL; // ← ZMIANA
+                pData->hCachedFont = NULL; // runtime handle nieważny po restarcie — wymuszenie lazy-init
             }
 
             // ← ZMIANA: Globalny plik presetów nadpisuje presety — zawsze wygrywa nad per-chart .dat
@@ -1101,8 +1102,7 @@ if (pData == NULL) {
     // 3. CZYSZCZENIE PAMIĘCI RAM PRZY USUWANIU WSKAŹNIKA
     if (sc.LastCallToFunction) {
         if (pData != NULL) {
-            if (pData->hCachedFont)    { ::DeleteObject(pData->hCachedFont);    } // ← ZMIANA: cleanup cached GDI font
-            if (pData->hCachedDashPen) { ::DeleteObject(pData->hCachedDashPen); } // ← ZMIANA: cleanup cached GDI pen
+            if (pData->hCachedFont)    { ::DeleteObject(pData->hCachedFont);    } // cleanup cached GDI font
             sc.FreeMemory(pData);
             sc.SetPersistentPointer(500, NULL);
         }
@@ -1110,6 +1110,8 @@ if (pData == NULL) {
     }
 
 if (pData == NULL) return;
+
+    const int maxD = max(1, min(sc.Input[13].GetInt(), 30)); // ← ZMIANA: konfigurowalna granica bufora kołowego
 
     // DYNAMICZNE MAPOWANIE PRZYCISKÓW Z MENU USTAWIEN (sc.Input) - Likwidacja sztywnych literałów
     int DrawBtn1   = sc.Input[0].GetInt(); // ← ZMIANA
@@ -1192,7 +1194,7 @@ if (pData == NULL) return;
 // 6. ASYNCHRONICZNY HAMULEC BEZPIECZEŃSTWA Z PEŁNĄ SANACJĄ OBIEKTÓW OSIEROCONYCH
     if (sc.CharacterEventCode == 32 && pData->TState > 0) {
         // Namierzamy slot, który właśnie próbowaliśmy rysować
-        int activeSlot = pData->numSaved % 30;
+        int activeSlot = pData->numSaved % maxD;
 
         // Jeśli zdążył wygenerować linię w Sierrze, bezwzględnie ją wycinamy
         if (pData->drawings[activeSlot].lineNumber != 0) {
@@ -1219,7 +1221,7 @@ if (pData == NULL) return;
     if (sc.MenuEventID == LastDelBtn) {
         if (pData->numSaved > 0) {
             // Kalkulacja indeksu wejściowego w płaskim buforze kołowym
-            int lastIdx = (pData->numSaved - 1) % 30;
+            int lastIdx = (pData->numSaved - 1) % maxD;
             
             // Utylizacja przerywanej linii grzbietu z rejestrów platformy Sierra Chart
             if (pData->drawings[lastIdx].lineNumber != 0) {
@@ -1253,7 +1255,7 @@ if (pData == NULL) return;
     // OBSŁUGA PRZYCISKU ALL DEL (ETAP 3)
     if (sc.MenuEventID == AllDelBtn) {
         // Pętla masowej utylizacji linii grzbietu z rejestrów platformy Sierra Chart
-        int limit = min(pData->numSaved, 30);
+        int limit = min(pData->numSaved, maxD);
         for (int k = 0; k < limit; k++) {
             if (pData->drawings[k].lineNumber != 0) {
                 sc.DeleteACSChartDrawing(sc.ChartNumber, 0, pData->drawings[k].lineNumber);
@@ -1289,7 +1291,7 @@ pData->SelectedIdx = -1;
 
 // 7. SEKCJA INTERAKCJI MYSZY - DWUSTOPNIOWY MODEL SELEKCJI WEKTOROWEJ (SPINE SELECTION STANDARD)
     if (!sc.DownloadingHistoricalData) {
-        int activeSlot = pData->numSaved % 30;
+        int activeSlot = pData->numSaved % maxD;
         int cIdx = sc.ActiveToolIndex;
         float mY = (float)sc.ActiveToolYValue;
         // Podpięcie dynamicznego parametru użytkownika (wartość 0 w silniku GetSnappedIndex wyłączy snapping)
@@ -1379,7 +1381,7 @@ else if (pData->TState == 2) {
 
                     // PODKROK B: Jeśli nie trafiono w węzeł zaznaczonego rysunku -> Matematyczny Hit-Test linii grzbietu (Spine)
                     if (!hitHandle) {
-                        int limit = min(pData->numSaved, 30);
+                        int limit = min(pData->numSaved, maxD);
                         int newSelectedIdx = -1;
 
                         for (int k = 0; k < limit; k++) {
@@ -1462,9 +1464,15 @@ else if (pData->TState == 2) {
             }
             else if (pData->TState > 0) {
                 if (pData->TState == 1) {
+                    // ← ZMIANA: bufor kołowy — usuń starą natywną linię przed nadpisaniem slotu
+                    if (pData->drawings[activeSlot].lineNumber != 0) {
+                        sc.DeleteACSChartDrawing(sc.ChartNumber, 0, pData->drawings[activeSlot].lineNumber);
+                        pData->drawings[activeSlot].lineNumber = 0; // ← ZMIANA
+                    }
+
                     bool isAHigh = (fabs(mY - sc.High[cIdx]) < fabs(mY - sc.Low[cIdx]));
                     int snappedAIdx = GetSnappedIndex(sc, cIdx, snapRange, isAHigh);
-                    
+
                     pData->drawings[activeSlot].priceA = isAHigh ? sc.High[snappedAIdx] : sc.Low[snappedAIdx];
                     pData->drawings[activeSlot].timeA = sc.BaseDateTimeIn[snappedAIdx];
                     pData->drawings[activeSlot].idxA = snappedAIdx;
@@ -1545,7 +1553,7 @@ else if (pData->TState == 2) {
             pData->LastSize = sc.ArraySize;
 
             int searchRangeBars = sc.Input[10].GetInt(); // ← ZMIANA
-            int limit = min(pData->numSaved, 30);
+            int limit = min(pData->numSaved, maxD);
             for (int k = 0; k < limit; k++) {
                 if (pData->drawings[k].priceA > 0.0f && pData->drawings[k].priceB > 0.0f) {
 
@@ -1587,7 +1595,7 @@ else if (pData->TState == 2) {
     } 
 else if (!effectiveIsVisible && pData->LastSize != -2) {
         // Masowa utylizacja linii pomocniczych hosta w ułamku sekundy wygaszenia widoczności
-        int limit = min(pData->numSaved, 30);
+        int limit = min(pData->numSaved, maxD);
         for (int k = 0; k < limit; k++) {
             if (pData->drawings[k].lineNumber != 0) {
                 sc.DeleteACSChartDrawing(sc.ChartNumber, 0, pData->drawings[k].lineNumber);
