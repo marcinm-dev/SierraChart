@@ -207,9 +207,9 @@ sc.GraphName = "DiNapoli Retracement";
         sc.p_GDIFunction = DrawReactionGDI;
 
         // --- UKRYWANIE ETYKIET (KOMENDY GLOBALNE) ---
-        sc.DisplayStudyName = 0;                             // Ukrywa nazwe w lewym g車rnym rogu
-        sc.DisplayStudyInputValues = 0;                      // Ukrywa parametry wej?ciowe w nagl車wku
-        sc.GlobalDisplayStudySubgraphsNameAndValue = 0;      // Wylacza wartosci subgraf車w w nagl車wku
+        sc.DisplayStudyName = 0;                             // Ukrywa nazwe w lewym g��rnym rogu
+        sc.DisplayStudyInputValues = 0;                      // Ukrywa parametry wej?ciowe w nagl��wku
+        sc.GlobalDisplayStudySubgraphsNameAndValue = 0;      // Wylacza wartosci subgraf��w w nagl��wku
         // POPRAWKA: Dodano sc.ChartNumber jako pierwszy argument
         sc.SetStudyAlwaysShowNameValueLabelsWhenEnabled(sc.ChartNumber, sc.StudyGraphInstanceID, 0);
 
@@ -222,7 +222,8 @@ sc.GraphName = "DiNapoli Retracement";
         sc.Input[6].Name = "Snapping Range"; sc.Input[6].SetInt(1); 
         sc.Input[7].Name = "Sync z Master HIDE (Button 20)"; sc.Input[7].SetYesNo(1);
         sc.Input[8].Name = "Master Hide Button ID"; sc.Input[8].SetInt(20);
-        sc.Input[9].Name = "Przycisk RETR DEL"; sc.Input[9].SetInt(23); 
+        sc.Input[9].Name = "Przycisk LAST DEL RETR"; sc.Input[9].SetInt(23); // ← ZMIANA
+        sc.Input[10].Name = "Przycisk ALL DEL RETR"; sc.Input[10].SetInt(24); // ← ZMIANA
         sc.Input[11].Name = "Search Range Bars (TF Stability)"; sc.Input[11].SetInt(25);
         sc.Input[12].Name = "Min Bars Cluster Visibility"; sc.Input[12].SetInt(3);
        sc.Input[13].Name = "Korekta przesuniecia GDI (piksele)"; sc.Input[13].SetInt(0);
@@ -236,7 +237,7 @@ for (int i = 1; i <= 60; i++) {
             sc.Subgraph[i].LineWidth = 5; 
             sc.Subgraph[i].PrimaryColor = RGB(65, 105, 225); 
 
-            // --- UKRYWANIE ETYKIET (POZIOM SUBGRAF車W) ---
+            // --- UKRYWANIE ETYKIET (POZIOM SUBGRAF��W) ---
             sc.Subgraph[i].DisplayNameValueInDataLine = 0;       // Region Data Line
             sc.Subgraph[i].DisplayNameValueInWindowsFlags = 0;   // Chart Values Window
             sc.Subgraph[i].IncludeInSpreadsheet = 0;             // Spreadsheet
@@ -280,8 +281,8 @@ for (int i = 1; i <= 60; i++) {
         *phPen = CreatePen(PS_SOLID, 1, sc.Input[3].GetColor());
     }
     // ------------------------------------------
-    int Btn = sc.Input[0].GetInt(), RetrDelBtn = sc.Input[9].GetInt(), snapRange = sc.Input[6].GetInt();
-    sc.SetCustomStudyControlBarButtonText(Btn, "RETR"); sc.SetCustomStudyControlBarButtonText(RetrDelBtn, "RETR DEL"); 
+    int Btn = sc.Input[0].GetInt(), LastDelBtn = sc.Input[9].GetInt(), AllDelBtn = sc.Input[10].GetInt(), snapRange = sc.Input[6].GetInt(); // ← ZMIANA
+    sc.SetCustomStudyControlBarButtonText(Btn, "RETR"); sc.SetCustomStudyControlBarButtonText(LastDelBtn, "LAST DEL RETR"); sc.SetCustomStudyControlBarButtonText(AllDelBtn, "ALL DEL RETR"); // ← ZMIANA
     int& TState = sc.GetPersistentInt(1), &LastSize = sc.GetPersistentInt(4), &SessionSteps = sc.GetPersistentInt(3); 
     int& LastSyncValue = sc.GetPersistentInt(15), &LastLeftIdx = sc.GetPersistentInt(16);
     
@@ -311,15 +312,30 @@ for (int i = 1; i <= 60; i++) {
 
 
 
-    if (sc.MenuEventID == RetrDelBtn) {
+    if (sc.MenuEventID == LastDelBtn && TState == 0) { // ← ZMIANA: kasuje ostatnią sesję tylko gdy żadna sesja nie jest aktywna
+        if (pData->numSaved > 0) {
+            int firstOfSession = pData->numSaved - 1;
+            while (firstOfSession > 0 && pData->retracements[firstOfSession].step > 0) // ← ZMIANA: granica sesji = step==0, niezależnie od tF
+                firstOfSession--;
+            for (int i = firstOfSession; i < pData->numSaved; i++)
+                for (int j = 0; j < SLOT_SIZE; j++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, RETR_BASE_ID + (i * SLOT_SIZE) + j);
+            for (int i = 1; i <= 60; i++) for (int k = 0; k < sc.ArraySize; k++) sc.Subgraph[i][k] = 0;
+            for (int i = firstOfSession; i < pData->numSaved; i++) memset(&pData->retracements[i], 0, sizeof(SavedRetracement));
+            pData->numSaved = firstOfSession;
+            SaveDiNapoliData(sc, pData); LastSize = -1;
+        }
+        sc.SetCustomStudyControlBarButtonEnable(LastDelBtn, 0); sc.MenuEventID = 0;
+    }
+
+    if (sc.MenuEventID == AllDelBtn) { // ← ZMIANA
         for (int id = 10000; id <= 10050; id++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, id);
         for (int i = 0; i < 20; i++) for (int j = 0; j < SLOT_SIZE; j++) sc.DeleteACSChartDrawing(sc.ChartNumber, 0, RETR_BASE_ID + (i * SLOT_SIZE) + j);
         for (int i = 1; i <= 60; i++) for (int k = 0; k < sc.ArraySize; k++) sc.Subgraph[i][k] = 0;
         memset(pData, 0, sizeof(DiNapoliData)); SaveDiNapoliData(sc, pData);
-        TState = 0; SessionSteps = 0; LastSize = -1; 
+        TState = 0; SessionSteps = 0; LastSize = -1;
         sc.GetPersistentFloat(10) = 0; sc.GetPersistentSCDateTime(10) = 0; sc.GetPersistentInt(11) = 0;
         sc.GetPersistentFloat(12) = 0; sc.GetPersistentInt(13) = 0;
-        sc.SetCustomStudyControlBarButtonEnable(Btn, 0); sc.SetCustomStudyControlBarButtonEnable(RetrDelBtn, 0); sc.MenuEventID = 0; 
+        sc.SetCustomStudyControlBarButtonEnable(Btn, 0); sc.SetCustomStudyControlBarButtonEnable(AllDelBtn, 0); sc.MenuEventID = 0; // ← ZMIANA
     }
 
 if (sc.CharacterEventCode == 32 && TState > 0) {
