@@ -38,6 +38,7 @@ SCDLLName("D1BarReplay_HLC_Override_v1")
     Int  33 : ostatni zalogowany dzien zrodla nieobecny w danych receivera (E4-lite)
     Int  34 : liczba ponowien narzucenia zakresu dat po przeladowaniu wykresu
     Int  35 : ostatni zalogowany status replay sendera (E3)
+    Int  36..37 : diagnostyka wykresu wyzszego okresu (ostatni dzien sendera, ArraySize)
     Int  40 : NeedResolve    (1 = czekamy na pelne dane, potem zaczytaj bar)
     Int  41 : FullSize       (liczba barow pelnych danych)
     Int  42..44 : zapamietane ustawienia zakresu dat uzytkownika (ByRange, Start, End)
@@ -240,6 +241,136 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
     float& AppL        = sc.GetPersistentFloat(4);
     float& AppC        = sc.GetPersistentFloat(5);
     SCDateTime& TargetDT = sc.GetPersistentSCDateTime(0);
+
+    // --- WYKRES WYZSZEGO OKRESU (W1/M1/Q1/Y1): na razie tylko diagnostyka, bez zapisu ---
+    // Logika nadpisania opiera sie na tym, ze bar receivera to jeden dzien o dacie sendera.
+    // Na wykresie tygodniowym/miesiecznym tak nie jest, wiec studium nic tam nie zmienia
+    // (zeby nie nalozyc dziennych H/L/C na bar tygodniowy). Wlasciwa obsluga (agregacja
+    // dni okresu z sendera) jest planowana jako E8, po sprawdzeniu danych z tego logu.
+    n_ACSIL::s_BarPeriod BarPeriod;
+    sc.GetBarPeriodParameters(BarPeriod);
+    bool IsHTF = (BarPeriod.ChartDataType == DAILY_DATA
+        && BarPeriod.HistoricalChartBarPeriodType != HISTORICAL_CHART_PERIOD_DAYS);
+
+    // Zabezpieczenie: odstep >= 6 dni miedzy kolejnymi barami (dwa razy z rzedu) = okres wyzszy
+    // niz dzienny (dzienne bary maja co najwyzej ~4 dni przerwy), gdyby powyzsze rozpoznanie zawiodlo.
+    if (!IsHTF && sc.ArraySize >= 3)
+    {
+        int L1 = sc.ArraySize - 1;
+        if (sc.BaseDateTimeIn[L1].GetDate() - sc.BaseDateTimeIn[L1 - 1].GetDate() >= 6
+            && sc.BaseDateTimeIn[L1 - 1].GetDate() - sc.BaseDateTimeIn[L1 - 2].GetDate() >= 6)
+            IsHTF = true;
+    }
+
+    if (IsHTF)
+    {
+        if (sc.LastCallToFunction)
+        {
+            ReleaseCut(sc);
+            return;
+        }
+
+        int HtfSrc = In_SourceChart.GetChartNumber();
+
+        // --- Cofanie daty: wykres wyzszego okresu konczy sie na dniu sendera ---
+        // Ostatni bar jest wtedy czesciowym okresem (np. tygodniem do dnia sendera).
+        // Wartosci H/L/C (agregacja dni okresu) dojda w E8 po sprawdzeniu logu [HTF].
+        if (HtfSrc <= 0 || HtfSrc == sc.ChartNumber || !In_Cut.GetYesNo())
+        {
+            ReleaseCut(sc);     // zrodlo wylaczone albo obciecie wylaczone: pelne dane
+        }
+        else
+        {
+            SCDateTimeArray CutTimes;
+            sc.GetChartDateTimeArray(HtfSrc, CutTimes);
+            int CutN = CutTimes.GetArraySize();
+            if (CutN > 0)
+            {
+                int WantedEnd = sc.GetTradingDayDateForChartNumber(HtfSrc, CutTimes[CutN - 1]);
+                int& HtfReasserts = sc.GetPersistentInt(34);
+                bool InEffect = (sc.LoadChartDataByDateRange == 1 && sc.ChartDataEndDate == WantedEnd);
+
+                if (CutEnd != WantedEnd)
+                {
+                    RequestCut(sc, WantedEnd);
+                    if (In_Diag.GetYesNo())
+                    {
+                        SCString Msg;
+                        Msg.Format("D1BarReplay[HTF]: obciecie zakresu dat do dnia sendera (EndDate=%d), ArraySize=%d", WantedEnd, sc.ArraySize);
+                        sc.AddMessageToLog(Msg, 0);
+                    }
+                }
+                else if (!InEffect && HtfReasserts < 3)
+                {
+                    // Przeladowanie wykresu moglo przywrocic pelne dane: narzuc zakres ponownie
+                    HtfReasserts++;
+                    RequestCut(sc, WantedEnd);
+                    LogMsg(sc, "[HTF] zakres dat nie obowiazuje po przeladowaniu: narzucam ponownie.");
+                }
+                else if (InEffect)
+                    HtfReasserts = 0;
+            }
+        }
+
+        if (HtfSrc > 0 && HtfSrc != sc.ChartNumber && In_Diag.GetYesNo() && sc.ArraySize > 0)
+        {
+            SCDateTimeArray HtfTimes;
+            sc.GetChartDateTimeArray(HtfSrc, HtfTimes);
+            SCGraphData HtfData;
+            sc.GetChartBaseData(HtfSrc, HtfData);
+
+            int N = HtfTimes.GetArraySize();
+            if (N > 0 && HtfData[SC_LAST].GetArraySize() >= N)
+            {
+                int SrcDay = sc.GetTradingDayDateForChartNumber(HtfSrc, HtfTimes[N - 1]);
+                int& LastDay  = sc.GetPersistentInt(36);
+                int& LastSize = sc.GetPersistentInt(37);
+
+                if (SrcDay != LastDay || sc.ArraySize != LastSize)
+                {
+                    LastDay = SrcDay;
+                    LastSize = sc.ArraySize;
+
+                    int Unit = TIME_PERIOD_LENGTH_UNIT_WEEKS;
+                    if (BarPeriod.HistoricalChartBarPeriodType == HISTORICAL_CHART_PERIOD_MONTHLY)
+                        Unit = TIME_PERIOD_LENGTH_UNIT_MONTHS;
+                    else if (BarPeriod.HistoricalChartBarPeriodType == HISTORICAL_CHART_PERIOD_QUARTERLY)
+                        Unit = TIME_PERIOD_LENGTH_UNIT_QUARTERS;
+                    else if (BarPeriod.HistoricalChartBarPeriodType == HISTORICAL_CHART_PERIOD_YEARLY)
+                        Unit = TIME_PERIOD_LENGTH_UNIT_YEARS;
+
+                    SCDateTime PeriodStart = sc.GetStartOfPeriodForDateTime(HtfTimes[N - 1], Unit, 1, 0);
+
+                    // Agregacja dni okresu z sendera (od poczatku okresu do biezacego dnia)
+                    float AggH = -1.0e10f, AggL = 1.0e10f, AggC = HtfData[SC_LAST][N - 1];
+                    int Days = 0;
+                    for (int i = N - 1; i >= 0; i--)
+                    {
+                        if (sc.GetTradingDayDateForChartNumber(HtfSrc, HtfTimes[i]) < PeriodStart.GetDate())
+                            break;
+                        if (HtfData[SC_HIGH][i] > AggH) AggH = HtfData[SC_HIGH][i];
+                        if (HtfData[SC_LOW][i]  < AggL) AggL = HtfData[SC_LOW][i];
+                        Days++;
+                    }
+
+                    int Last = sc.ArraySize - 1;
+                    SCString Msg;
+                    Msg.Format("D1BarReplay[HTF]: okres=%d (2=W 3=M 4=Q 5=Y) ArraySize=%d | daty ostatnich barow: [%d]=%s [%d]=%s [%d]=%s | dzien sendera=%d, poczatek okresu=%s | agregat z sendera (%d dni): H=%.2f L=%.2f C=%.2f | ostatni bar tego wykresu: O=%.2f H=%.2f L=%.2f C=%.2f",
+                        (int)BarPeriod.HistoricalChartBarPeriodType, sc.ArraySize,
+                        Last, sc.FormatDateTime(sc.BaseDateTimeIn[Last]).GetChars(),
+                        Last > 0 ? Last - 1 : 0, sc.FormatDateTime(sc.BaseDateTimeIn[Last > 0 ? Last - 1 : 0]).GetChars(),
+                        Last > 1 ? Last - 2 : 0, sc.FormatDateTime(sc.BaseDateTimeIn[Last > 1 ? Last - 2 : 0]).GetChars(),
+                        SrcDay, sc.FormatDateTime(PeriodStart).GetChars(),
+                        Days, AggH, AggL, AggC,
+                        sc.BaseData[SC_OPEN][Last], sc.BaseData[SC_HIGH][Last],
+                        sc.BaseData[SC_LOW][Last], sc.BaseData[SC_LAST][Last]);
+                    sc.AddMessageToLog(Msg, 0);
+                }
+            }
+        }
+
+        return;     // brak nadpisania i brak obcinania na wykresach wyzszego okresu
+    }
 
     // --- DIAGNOSTYKA E1: log przy kazdej zmianie inputow widzianych przez studium ---
     if (In_Diag.GetYesNo() && !sc.LastCallToFunction)
