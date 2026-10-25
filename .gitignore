@@ -1,0 +1,8 @@
+*.dll
+*.obj
+*.exp
+*.lib
+*.pdb
+*.bak*
+*.dly
+*.scid
