@@ -15,7 +15,8 @@ SCDLLName("D1BarReplay_HLC_Override_v1")
   STATUS BUDOWY (patrz plan w D1BarReplay_PLAN.md):
     E1  Silnik nadpisania (reczny)        <- ZAMKNIETY (zaliczone w tescie)
     E2  Odczyt wykresu zrodlowego (diag.) <- ZAIMPLEMENTOWANE (tylko log, bez zapisu)
-    E3  Polaczenie zrodlo -> nadpisanie   <- TODO
+    E3  Polaczenie zrodlo -> nadpisanie   <- WCZESNA WERSJA (do testu): Apply = Yes + wykres zrodlowy
+                                             => H/L/C z ostatniego bara sendera, gdy replay gra/pauza
     E4  Przeskok dnia                     <- CZESCIOWO: receiver podaza za DNIEM wykresu zrodlowego
                                              (obciecie + zaczytanie bara). Wartosci H/L/C z sendera = E3.
     E5  Obciecie danych (lookahead)       <- WCZESNA WERSJA: obciecie do dnia bara wybranego
@@ -35,6 +36,8 @@ SCDLLName("D1BarReplay_HLC_Override_v1")
     Int  30 : LastBarsBack
     Int  32 : Initialized    (0 = pierwsze wywolanie: auto-zaczytanie bara)
     Int  33 : ostatni zalogowany dzien zrodla nieobecny w danych receivera (E4-lite)
+    Int  34 : liczba ponowien narzucenia zakresu dat po przeladowaniu wykresu
+    Int  35 : ostatni zalogowany status replay sendera (E3)
     Int  40 : NeedResolve    (1 = czekamy na pelne dane, potem zaczytaj bar)
     Int  41 : FullSize       (liczba barow pelnych danych)
     Int  42..44 : zapamietane ustawienia zakresu dat uzytkownika (ByRange, Start, End)
@@ -254,8 +257,13 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         int   B = In_BarsBack.GetInt();
         float H = In_High.GetFloat(), Lo = In_Low.GetFloat(), C = In_Close.GetFloat();
 
+        // W trybie z wykresem zrodlowym H/L/C inputow zmieniaja sie co tick (studium je odswieza):
+        // nie logujemy tych zmian, zeby nie dublowac linii APPLY.
+        int  SnapSrc = In_SourceChart.GetChartNumber();
+        bool SrcMode = (SnapSrc > 0 && SnapSrc != sc.ChartNumber);
+
         if (SnapN == 0 || A != SnapA || L != SnapL || R != SnapR || B != SnapB
-            || H != SnapH || Lo != SnapLo || C != SnapC)
+            || (!SrcMode && (H != SnapH || Lo != SnapLo || C != SnapC)))
         {
             SnapN = 1; SnapA = A; SnapL = L; SnapR = R; SnapB = B;
             SnapH = H; SnapLo = Lo; SnapC = C;
@@ -317,11 +325,37 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         LogMsg(sc, "Obciecie wylaczone: przywrocono zakres dat wykresu.");
     }
 
+    // --- Przeladowanie wykresu (np. Reload and Recalculate) moze zignorowac narzucony zakres ---
+    // Log z 2026-10-25 11:10:10: ArraySize 1281 -> 1286 przy CutEnd != 0, czyli wykres wrocil do
+    // pelnych danych, a studium dalej uwazalo, ze jest obciete. Wtedy narzucamy zakres ponownie.
+    // Limit prob chroni przed nieskonczona petla przeladowan, gdyby Sierra zakresu nie przyjela.
+    {
+        int& Reasserts = sc.GetPersistentInt(34);
+        if (CutEnd != 0 && In_Cut.GetYesNo() && sc.ArraySize > 0
+            && sc.BaseDateTimeIn[sc.ArraySize - 1].GetDate() > CutEnd)
+        {
+            if (Reasserts < 3)
+            {
+                Reasserts++;
+                RequestCut(sc, CutEnd);
+                if (In_Diag.GetYesNo())
+                    LogMsg(sc, "Wykres wrocil do pelnych danych (przeladowanie): narzucam zakres dat ponownie.");
+            }
+            else if (Reasserts == 3)
+            {
+                Reasserts++;
+                LogMsg(sc, "Nie udalo sie utrzymac zakresu dat po 3 probach - przerywam ponawianie.");
+            }
+        }
+        else
+            Reasserts = 0;
+    }
+
     // --- SPRZEZENIE Z WYKRESEM ZRODLOWYM: dzien receivera podaza za dniem sendera ---
     // Gdy podano wykres zrodlowy, 'Bar od konca' jest ustawiany przez studium (Sierra nie ma
     // inputow read-only, wiec reczna zmiana jest nadpisywana). Dalej dziala zwykla sciezka:
     // zmiana 'Bar od konca' -> zaczytanie bara + obciecie wykresu do jego dnia.
-    // Na razie tylko DATA (E4-lite). Wartosci H/L/C nadal z inputow (E3 pozniej).
+    // Wartosci H/L/C przy wykresie zrodlowym: patrz E3 w sekcji APPLY (wymaga Apply = Yes).
     // Lista wykresow w Sierra nie ma pozycji "brak": wybor WLASNEGO wykresu = wylaczone.
     int FollowChart = In_SourceChart.GetChartNumber();
     if (FollowChart == sc.ChartNumber)
@@ -542,14 +576,70 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         {
             TargetIdx = Idx;
 
-            float H = sc.RoundToTickSize(In_High.GetFloat());
-            float L = sc.RoundToTickSize(In_Low.GetFloat());
-            float C = sc.RoundToTickSize(In_Close.GetFloat());
+            float H = 0.0f, L = 0.0f, C = 0.0f;
+            bool ValuesReady = true;
+
+            if (FollowChart > 0)
+            {
+                // E3: H/L/C z ostatniego bara wykresu zrodlowego (sender), tylko gdy replay
+                // trwa lub jest wstrzymany. Gdy zatrzymany: bar zostaje oryginalny (settlement).
+                ValuesReady = false;
+
+                int Status = (int)sc.GetReplayStatusFromChart(FollowChart);
+                int& LastStatus = sc.GetPersistentInt(35);
+                if (Status != LastStatus)
+                {
+                    LastStatus = Status;
+                    if (In_Diag.GetYesNo())
+                    {
+                        SCString Msg;
+                        Msg.Format("D1BarReplay[E3]: status replay sendera ch%d = %d (0=stop, 1=gra, 2=pauza)%s",
+                            FollowChart, Status, Status == 0 ? " - wartosci sendera nie sa nakladane" : "");
+                        sc.AddMessageToLog(Msg, 0);
+                    }
+                }
+
+                if (Status != 0)
+                {
+                    SCGraphData SrcData;
+                    sc.GetChartBaseData(FollowChart, SrcData);
+                    SCDateTimeArray SrcTimes;
+                    sc.GetChartDateTimeArray(FollowChart, SrcTimes);
+
+                    int SrcN = SrcTimes.GetArraySize();
+                    if (SrcN > 0 && SrcData[SC_LAST].GetArraySize() >= SrcN)
+                    {
+                        int SrcLast = SrcN - 1;
+                        int SrcDay  = sc.GetTradingDayDateForChartNumber(FollowChart, SrcTimes[SrcLast]);
+
+                        // Nakladaj tylko gdy bar docelowy jest z tego samego dnia co bar sendera
+                        // (przy przeskoku dnia receiver jeszcze przechodzi na nowy bar)
+                        if (TargetDT.GetDate() == SrcDay)
+                        {
+                            H = sc.RoundToTickSize(SrcData[SC_HIGH][SrcLast]);
+                            L = sc.RoundToTickSize(SrcData[SC_LOW][SrcLast]);
+                            C = sc.RoundToTickSize(SrcData[SC_LAST][SrcLast]);
+                            ValuesReady = true;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                H = sc.RoundToTickSize(In_High.GetFloat());
+                L = sc.RoundToTickSize(In_Low.GetFloat());
+                C = sc.RoundToTickSize(In_Close.GetFloat());
+            }
+
             float O = sc.BaseData[SC_OPEN][Idx];
 
             // Walidacja: High >= Open, Close, Low  |  Low <= Open, Close
             bool Valid = (H >= O && H >= C && H >= L && L <= O && L <= C);
-            if (!Valid)
+            if (!ValuesReady)
+            {
+                // Brak wartosci do nalozenia (replay zatrzymany / inny dzien): bar zostaje oryginalny
+            }
+            else if (!Valid)
             {
                 // UpdateAlways wola studium ciagle: komunikat tylko przy zmianie wartosci
                 float& RejH = sc.GetPersistentFloat(26);
@@ -585,6 +675,18 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                 float& LogC = sc.GetPersistentFloat(25);
                 bool Changed = (H != LogH || L != LogL || C != LogC);
                 LogH = H; LogL = L; LogC = C;
+
+                // Przy zasilaniu z sendera inne studia na receiverze nie przeliczaja sie same
+                // (wywolanie z UpdateAlways), wiec po zmianie wartosci wymuszamy przeliczenie wykresu.
+                if (FollowChart > 0 && Changed)
+                {
+                    sc.FlagFullRecalculate = 1;
+
+                    // Inputy H/L/C pokazuja aktualnie nalozone wartosci (w tym trybie nie sa zrodlem danych)
+                    In_High.SetFloat(H);
+                    In_Low.SetFloat(L);
+                    In_Close.SetFloat(C);
+                }
 
                 if (In_Diag.GetYesNo() && Changed)
                 {
