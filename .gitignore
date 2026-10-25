@@ -1,8 +1,5 @@
-*.dll
-*.obj
-*.exp
-*.lib
-*.pdb
-*.bak*
-*.dly
-*.scid
+# Repository holds only the study source and the README. Everything else stays local.
+*
+!.gitignore
+!README.md
+!D1BarReplay.cpp
