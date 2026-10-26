@@ -441,16 +441,13 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                     HasTarget = 1;
                     Applied   = 1;
 
-                    float& LogH = sc.GetPersistentFloat(23);
-                    float& LogL = sc.GetPersistentFloat(24);
-                    float& LogC = sc.GetPersistentFloat(25);
-                    bool Changed = (H != LogH || L != LogL || C != LogC);
-                    LogH = H; LogL = L; LogC = C;
+                    // Przeliczenie wskaznikow ustawia blok "stan widziany przez wskazniki" nizej.
+                    bool Changed = (H != sc.GetPersistentFloat(23)
+                        || L != sc.GetPersistentFloat(24)
+                        || C != sc.GetPersistentFloat(25));
 
                     if (Changed)
                     {
-                        sc.FlagFullRecalculate = 1;     // wskazniki na tym wykresie maja sie przeliczyc
-
                         if (In_Diag.GetYesNo())
                         {
                             SCString Msg;
@@ -472,6 +469,23 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                         sc.AddMessageToLog(Msg, 0);
                     }
                 }
+            }
+        }
+
+        // --- Stan widziany przez wskazniki: przelicz, gdy sie zmienil (nalozono, zmieniono, cofnieto) ---
+        // Revert na poczatku wywolania cofa dane bez przeliczenia, wiec po Stop replay (Applied = 0)
+        // wskazniki zostalyby na starych wartosciach. Stan "oryginal" = (0,0,0).
+        {
+            float& SeenH = sc.GetPersistentFloat(23);
+            float& SeenL = sc.GetPersistentFloat(24);
+            float& SeenC = sc.GetPersistentFloat(25);
+            float NowH = (Applied == 1) ? AppH : 0.0f;
+            float NowL = (Applied == 1) ? AppL : 0.0f;
+            float NowC = (Applied == 1) ? AppC : 0.0f;
+            if (NowH != SeenH || NowL != SeenL || NowC != SeenC)
+            {
+                SeenH = NowH; SeenL = NowL; SeenC = NowC;
+                sc.FlagFullRecalculate = 1;
             }
         }
 
