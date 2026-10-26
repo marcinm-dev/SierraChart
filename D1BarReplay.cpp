@@ -17,7 +17,7 @@ SCDLLName("D1BarReplay_HLC_Override_v1")
 
   STATUS BUDOWY (patrz plan w D1BarReplay_PLAN.md):
     E1  Silnik nadpisania (reczny)        <- ZAMKNIETY
-    E3  Polaczenie zrodlo -> nadpisanie   <- ZWERYFIKOWANE: Apply = Yes + wykres zrodlowy
+    E3  Polaczenie zrodlo -> nadpisanie   <- ZWERYFIKOWANE: wykres zrodlowy (Master chart)
                                              => H/L/C z ostatniego bara sendera, gdy replay gra/pauza
     E4  Przeskok dnia                     <- ZWERYFIKOWANE: receiver podaza za DNIEM wykresu zrodlowego
                                              (obciecie + zaczytanie bara).
@@ -41,6 +41,9 @@ SCDLLName("D1BarReplay_HLC_Override_v1")
     Int  42..44 : zapamietane ustawienia zakresu dat uzytkownika (ByRange, Start, End)
     Int  46 : licznik czyszczenia zastanej daty koncowej zakresu dat (D1, max 3)
     Int  49 : CutEnd         (data koncowa narzucona przez studium, 0 = brak obciecia)
+    Int  50 : numer rysunku z czerwonym ostrzezeniem (0 = brak), patrz ShowWarning
+    Int  51..53 : W/M/Q/Y: ostatnio zalogowany dzien sendera, status replay, stan (log tylko przy zmianie)
+    Input 18 : "Daily chart" (W/M/Q/Y), wykres dzienny z danymi dni okresu przed dniem replay
     Float 0..2 : Orig  H, L, C
     Float 3..5 : Applied H, L, C
     Float 23..25 : D1: ostatnio nalozone H, L, C (reakcja tylko na zmiane) |
@@ -132,6 +135,64 @@ static void ReleaseCut(SCStudyInterfaceRef sc)
     CutEnd = 0;
 }
 
+// --- Ostrzezenie na wykresie ------------------------------------------------
+// Czerwony napis na srodku wykresu, gdy wartosci z mastera zostaly odrzucone (niezgodne z Open tego
+// wykresu, np. wykres ciagly [C] ze starszym kontraktem sprzed rolla): bar zostaje wtedy z danymi
+// z pliku, a nie ze stanem z replay. Code: 0 = usun napis, 1 = niezgodnosc Open (seria kontraktu),
+// 2 = brak danych z wykresu Daily (W/M/Q/Y), 3 = nie ustawiono wykresu Daily (W/M/Q/Y). Numer rysunku trzymany w persistent 50.
+static void ShowWarning(SCStudyInterfaceRef sc, int Code)
+{
+    bool Show = (Code != 0);
+    int& Line = sc.GetPersistentInt(50);
+
+    // Rysunek mogl zniknac (przeladowanie wykresu): wtedy numer jest nieaktualny
+    if (Line != 0 && sc.ChartDrawingExists(sc.ChartNumber, Line) == 0)
+        Line = 0;
+
+    if (!Show)
+    {
+        if (Line != 0)
+        {
+            sc.DeleteACSChartDrawing(sc.ChartNumber, TOOL_DELETE_CHARTDRAWING, Line);
+            Line = 0;
+        }
+        return;
+    }
+
+    s_UseTool Tool;
+    Tool.ChartNumber = sc.ChartNumber;
+    Tool.DrawingType = DRAWING_TEXT;
+    Tool.Region = sc.GraphRegion;
+    Tool.AddMethod = UTAM_ADD_OR_ADJUST;
+    Tool.BeginDateTime = 75;                    // pozycja pozioma: skala 0-150 (zrzut: 50 dalo ok. 1/3 szerokosci), 75 = srodek
+    Tool.BeginValue = 50.0f;                    // pozycja pionowa: 50% wysokosci (srodek)
+    Tool.UseRelativeVerticalValues = 1;
+    Tool.TextAlignment = DT_CENTER | DT_VCENTER;
+    Tool.Color = RGB(255, 255, 255);
+    Tool.FontBackColor = RGB(200, 0, 0);
+    Tool.TransparentLabelBackground = 0;
+    Tool.FontBold = 1;
+    Tool.FontSize = 16;
+    Tool.FontFace = sc.GetChartTextFontFaceName();
+    // Studium dalej podaza za masterem i obcina wykres, ale NIE naklada H/L/C z replay: bar zostaje z pliku.
+    if (Code == 3)
+        Tool.Text = "D1 Bar Replay - Ustaw Daily chart.\n"
+                    "Narzedzie dziala niepoprawnie - dane z replay NIE nalozone";
+    else if (Code == 2)
+        Tool.Text = "D1 Bar Replay - brak danych z wykresu Daily.\n"
+                    "Narzedzie dziala niepoprawnie - dane z replay NIE nalozone";
+    else
+        Tool.Text = "D1 Bar Replay - niezgodnosc serii kontraktu (Open price).\n"
+                    "Narzedzie dziala niepoprawnie - dane z replay NIE nalozone";
+    Tool.DrawUnderneathMainGraph = 0;
+
+    if (Line != 0)
+        Tool.LineNumber = Line;
+
+    if (sc.UseTool(Tool) > 0)
+        Line = Tool.LineNumber;
+}
+
 // --- Pola [RO]: oryginaly zaczytanych barow --------------------------------
 // Siatka bezpieczenstwa: gdyby cos poszlo nie tak, mozna recznie przywrocic bar.
 // Sierra nie ma inputow read-only, wiec studium samo je wypelnia i nie czyta ich
@@ -162,7 +223,7 @@ static void ShiftSlots(SCStudyInterfaceRef sc)
 
 SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
 {
-    SCInputRef In_Apply       = sc.Input[0];
+    SCInputRef In_Apply       = sc.Input[0];    // dawniej "TURN ON/OFF"; ukryty i ignorowany (nakladanie wlacza sam Master chart)
     SCInputRef In_Load        = sc.Input[1];
     SCInputRef In_High        = sc.Input[2];
     SCInputRef In_Low         = sc.Input[3];
@@ -173,27 +234,34 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
     SCInputRef In_Unused8     = sc.Input[8];    // dawniej "Diagnostyka w logu"; slot zostaje, zeby nie przesunac inputow
     SCInputRef In_Cut         = sc.Input[9];
     // Inputy 10-17: pola [RO] (patrz WriteSlot)
-    // W oknie ustawien widoczne sa tylko In_Apply ("TURN ON/OFF") i In_SourceChart ("Master chart");
+    SCInputRef In_DailyChart  = sc.Input[18];   // tylko W/M/Q/Y: wykres Daily z danymi dni okresu (wymagany)
+    // W oknie ustawien widoczne sa tylko In_SourceChart ("Master chart") i In_DailyChart ("Daily chart");
     // reszta nie ma nazwy, wiec jest ukryta (patrz SetDefaults).
 
     if (sc.SetDefaults)
     {
         sc.GraphName = "D1 Bar Replay (HLC Override)";
         sc.StudyDescription = "Nadpisuje H/L/C jednego bara w pamieci wykresu. Nie zapisuje do plikow danych. "
-            "Master chart: wybierz wykres z Bar Replay; wybranie wlasnego wykresu = wylaczone.";
+            "Master chart: wybierz wykres z Bar Replay; wybranie wlasnego wykresu = wylaczone. "
+            "Daily chart: wymagany na wykresach Weekly/Monthly/Quarterly/Yearly, wykres dzienny z tej samej serii kontraktow.";
         sc.AutoLoop = 0;            // manual looping: jedno wywolanie, nie petla po barach
         sc.UpdateAlways = 1;        // potrzebne do odpytywania wykresu zrodlowego (E2+)
         sc.GraphRegion = 0;
         sc.CalculationPrecedence = STD_PREC_LEVEL;   // kolejnosc: studium ma byc NA GORZE listy studiow
         sc.ProcessStudyUnsetInputs = 1;     // wiele ukrytych (bez nazwy) inputow z rzedu
 
-        // Widoczne dla uzytkownika sa tylko dwa inputy. Input bez ustawionej nazwy (Name) Sierra
+        // Widoczny dla uzytkownika jest tylko jeden input. Input bez ustawionej nazwy (Name) Sierra
         // nie pokazuje w oknie ustawien studium, ale nadal istnieje i dziala w kodzie.
-        In_Apply.Name = "TURN ON/OFF";
-        In_Apply.SetYesNo(0);
+        // Wylaczenie narzedzia = wybor wlasnego wykresu jako Master chart.
+        In_Apply.SetYesNo(1);
 
         In_SourceChart.Name = "Master chart";
         In_SourceChart.SetChartNumber(0);
+
+        // Tylko dla wykresow Weekly/Monthly/Quarterly/Yearly: wykres Daily (historical, ta sama seria
+        // kontraktow) z ktorego studium bierze dni okresu przed dniem replay. Na wykresie D1 ignorowany.
+        In_DailyChart.Name = "Daily chart (tylko W/M/Q/Y)";
+        In_DailyChart.SetChartNumber(0);
 
         // Ukryte (bez nazwy): reczny tryb, bar od konca, obciecie, pola [RO]
         In_Load.SetYesNo(0);
@@ -278,6 +346,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
 
         if (sc.LastCallToFunction)
         {
+            ShowWarning(sc, false);
             ReleaseCut(sc);
             return;
         }
@@ -299,7 +368,10 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
             {
                 int WantedEnd = sc.GetTradingDayDateForChartNumber(HtfSrc, CutTimes[CutN - 1]);
                 int& HtfReasserts = sc.GetPersistentInt(34);
-                bool InEffect = (sc.LoadChartDataByDateRange == 1 && sc.ChartDataEndDate == WantedEnd);
+                // Ustawienie zakresu moze obowiazywac, a dane byc pelne (po "Reload and Recalculate"):
+                // sprawdzamy tez, czy ostatni bar nie jest pozniejszy niz dzien obciecia (jak na D1).
+                bool InEffect = (sc.LoadChartDataByDateRange == 1 && sc.ChartDataEndDate == WantedEnd
+                    && (sc.ArraySize == 0 || sc.BaseDateTimeIn[sc.ArraySize - 1].GetDate() <= WantedEnd));
 
                 if (CutEnd != WantedEnd)
                     RequestCut(sc, WantedEnd);
@@ -319,10 +391,28 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         // cena sendera. Poczatek okresu liczymy z POLUDNIA dnia handlowego, bo bar sendera dnia
         // handlowego zaczyna sie dzien wczesniej wieczorem (np. 1.10 zaczyna sie 30.09 18:00,
         // co dla okresu miesiecznego wskazaloby poprzedni miesiac).
+        // Dni okresu PRZED dniem sendera bierzemy z wykresu Daily (In_DailyChart: dane z pliku, ta sama
+        // seria kontraktow co ten wykres), a z sendera tylko dzien replay. Bez wykresu Daily nic nie
+        // nakladamy i pokazujemy ostrzezenie (agregat calego okresu z samego sendera dawal na wykresach
+        // [C] roznice 50-60 pkt w okresach z rollem, wiec tego trybu juz nie ma).
         bool  HaveAgg = false;
         int   SrcDay = 0, Days = 0;
         float AggH = -1.0e10f, AggL = 1.0e10f, AggC = 0.0f;
         SCDateTime PeriodStart;
+
+        // Lista wykresow nie ma pozycji "brak": wybor WLASNEGO wykresu albo wykresu MASTER traktujemy
+        // jak nieustawiony wykres Daily (DailySrc = 0 -> napis "Ustaw Daily chart").
+        int   DailySrc = In_DailyChart.GetChartNumber();
+        if (DailySrc == sc.ChartNumber || DailySrc == HtfSrc)
+            DailySrc = 0;
+        bool  DailyOk = false;              // dane dzienne z wykresu Daily uzyte
+        bool  DayOpenMismatch = false;      // Open dnia z sendera != Open tego dnia z wykresu Daily
+        int   DailyDays = 0, DailyFirstDate = 0;
+        float DailyOpenFirst = 0.0f, DailyOpenDay = 0.0f;
+        float SrcO = 0.0f, SrcH = 0.0f, SrcL = 0.0f;
+        const float OpenTol = sc.TickSize * 0.5f;       // Open ma byc identyczny (pol ticka = tylko zaokraglenie float)
+        int   ReplayStatus = (HtfSrc > 0 && HtfSrc != sc.ChartNumber) ? (int)sc.GetReplayStatusFromChart(HtfSrc) : 0;   // 0 = stop, 1 = gra, 2 = pauza
+        int   WarnCode = 0;                 // 0 = brak, 1 = niezgodnosc Open, 2 = brak danych z wykresu Daily, 3 = nie ustawiono wykresu Daily
 
         if (HtfSrc > 0 && HtfSrc != sc.ChartNumber && sc.ArraySize > 0)
         {
@@ -348,33 +438,90 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                 PeriodStart = sc.GetStartOfPeriodForDateTime(DayNoon, Unit, 1, 0);
 
                 AggC = HtfData[SC_LAST][N - 1];
-                bool ReachedBefore = false;
-                for (int i = N - 1; i >= 0; i--)
-                {
-                    if (sc.GetTradingDayDateForChartNumber(HtfSrc, HtfTimes[i]) < PeriodStart.GetDate())
-                    {
-                        ReachedBefore = true;
-                        break;
-                    }
-                    if (HtfData[SC_HIGH][i] > AggH) AggH = HtfData[SC_HIGH][i];
-                    if (HtfData[SC_LOW][i]  < AggL) AggL = HtfData[SC_LOW][i];
-                    Days++;
-                }
+                SrcO = HtfData[SC_OPEN][N - 1];
+                SrcH = HtfData[SC_HIGH][N - 1];
+                SrcL = HtfData[SC_LOW][N - 1];
 
-                // Historia sendera musi siegac poczatku okresu (kwartal/rok moga jej nie miec).
-                // Brak pokrycia (np. rok): nic nie nakladamy, ostatni bar zostaje z pliku.
-                int OldestDay = sc.GetTradingDayDateForChartNumber(HtfSrc, HtfTimes[0]);
-                bool Covered = ReachedBefore || (OldestDay - PeriodStart.GetDate() <= 2);
-                HaveAgg = (Days > 0 && Covered);
+                if (DailySrc > 0)
+                {
+                    // Dni okresu z wykresu Daily (musi byc dziennym wykresem historical, siegac dnia sendera)
+                    n_ACSIL::s_BarPeriod DailyPeriod;
+                    sc.GetBarPeriodParametersForChart(DailySrc, DailyPeriod);
+                    SCDateTimeArray DTimes;
+                    sc.GetChartDateTimeArray(DailySrc, DTimes);
+                    SCGraphData DData;
+                    sc.GetChartBaseData(DailySrc, DData);
+
+                    int DN = DTimes.GetArraySize();
+                    bool IsDailyChart = (DailyPeriod.ChartDataType == DAILY_DATA
+                        && DailyPeriod.HistoricalChartBarPeriodType == HISTORICAL_CHART_PERIOD_DAYS);
+
+                    if (IsDailyChart && DN > 0 && DData[SC_LAST].GetArraySize() >= DN
+                        && DTimes[DN - 1].GetDate() >= SrcDay)
+                    {
+                        int PStart = PeriodStart.GetDate();
+                        int FirstIdx = -1, DayIdx = -1;
+                        bool ReachedBefore = false;
+                        float DH = -1.0e10f, DL = 1.0e10f;
+
+                        for (int i = DN - 1; i >= 0; i--)
+                        {
+                            int d = DTimes[i].GetDate();
+                            if (d > SrcDay)         // wykres Daily jeszcze nie obciety do dnia sendera
+                                continue;
+                            if (d < PStart)
+                            {
+                                ReachedBefore = true;
+                                break;
+                            }
+                            if (d == SrcDay)
+                                DayIdx = i;         // dzien replay: H/L/C dostarcza sender
+                            else
+                            {
+                                if (DData[SC_HIGH][i] > DH) DH = DData[SC_HIGH][i];
+                                if (DData[SC_LOW][i]  < DL) DL = DData[SC_LOW][i];
+                                DailyDays++;
+                            }
+                            FirstIdx = i;
+                            DailyFirstDate = d;
+                        }
+
+                        bool Covered = ReachedBefore || (DTimes[0].GetDate() - PStart <= 2);
+                        if (FirstIdx >= 0 && Covered)
+                        {
+                            DailyOk = true;
+                            DailyOpenFirst = DData[SC_OPEN][FirstIdx];
+
+                            // Zgodnosc serii kontraktow: Open dnia replay z sendera vs Open tego dnia z pliku
+                            if (DayIdx >= 0)
+                            {
+                                DailyOpenDay = DData[SC_OPEN][DayIdx];
+                                DayOpenMismatch = (fabs((double)SrcO - (double)DailyOpenDay) > (double)OpenTol);
+                            }
+
+                            AggH = (SrcH > DH) ? SrcH : DH;
+                            AggL = (SrcL < DL) ? SrcL : DL;
+                            Days = DailyDays + 1;
+                            HaveAgg = true;
+                        }
+                    }
+                }
             }
         }
 
+        if (DailySrc <= 0 && ReplayStatus != 0)
+            WarnCode = 3;       // brak wykresu Daily w ustawieniach: narzedzie nic nie naklada
+        else if (DailySrc > 0 && !DailyOk && ReplayStatus != 0)
+            WarnCode = 2;
+        else if (DayOpenMismatch && ReplayStatus != 0)
+            WarnCode = 1;
+
         // --- E8: nalozenie zagregowanych H/L/C na ostatni bar (czesciowy okres) ---
-        // Warunki: Apply = Yes, wykres obciety do dnia sendera, replay gra lub pauza.
+        // Warunki: wykres obciety do dnia sendera, replay gra lub pauza.
         // Przy zatrzymanym replay bar zostaje oryginalny (Revert wykonany na poczatku bloku).
-        if (In_Apply.GetYesNo() && HaveAgg && CutEnd != 0 && CutEnd == SrcDay && sc.ArraySize > 0)
+        if (HaveAgg && CutEnd != 0 && CutEnd == SrcDay && sc.ArraySize > 0)
         {
-            int Status = (int)sc.GetReplayStatusFromChart(HtfSrc);     // 0 = stop, 1 = gra, 2 = pauza
+            int Status = ReplayStatus;
 
             int Last  = sc.ArraySize - 1;
             int Stamp = sc.BaseDateTimeIn[Last].GetDate();
@@ -387,7 +534,12 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                 float C = sc.RoundToTickSize(AggC);
                 float O = sc.BaseData[SC_OPEN][Last];
 
-                if (H >= O && H >= C && H >= L && L <= O && L <= C)
+                // Z wykresem Daily: Open okresu na tym wykresie musi zgadzac sie z Open pierwszego dnia
+                // okresu z wykresu Daily (inaczej to inna seria kontraktow). Open dnia replay sprawdzono wyzej.
+                bool PeriodOpenMismatch = (DailyOk && fabs((double)O - (double)DailyOpenFirst) > (double)OpenTol);
+
+                if (!PeriodOpenMismatch && !DayOpenMismatch
+                    && H >= O && H >= C && H >= L && L <= O && L <= C)
                 {
                     OrigH = sc.BaseData[SC_HIGH][Last];
                     OrigL = sc.BaseData[SC_LOW][Last];
@@ -401,8 +553,47 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                     HasTarget = 1;
                     Applied   = 1;
                 }
+                else
+                    WarnCode = 1;
             }
         }
+
+        // --- Log (tylko przy zmianie dnia sendera, statusu replay lub stanu): do sprawdzenia agregatu ---
+        {
+            int& LogDay    = sc.GetPersistentInt(51);
+            int& LogStatus = sc.GetPersistentInt(52);
+            int& LogState  = sc.GetPersistentInt(53);
+            int State = (Applied == 1) ? 3 : WarnCode;      // 0 = nie nakladam, 1/2 = ostrzezenie, 3 = nalozone
+
+            if (HtfSrc > 0 && HtfSrc != sc.ChartNumber
+                && (SrcDay != LogDay || ReplayStatus != LogStatus || State != LogState))
+            {
+                LogDay = SrcDay; LogStatus = ReplayStatus; LogState = State;
+
+                float FileH = 0.0f, FileL = 0.0f, FileC = 0.0f, BarO = 0.0f;
+                if (sc.ArraySize > 0)
+                {
+                    int Lb = sc.ArraySize - 1;
+                    BarO  = sc.BaseData[SC_OPEN][Lb];
+                    FileH = (Applied == 1) ? OrigH : sc.BaseData[SC_HIGH][Lb];
+                    FileL = (Applied == 1) ? OrigL : sc.BaseData[SC_LOW][Lb];
+                    FileC = (Applied == 1) ? OrigC : sc.BaseData[SC_LAST][Lb];
+                }
+
+                SCString Msg;
+                Msg.Format("[HTF] okres=%d dzien=%d status=%d zrodlo=%s stan=%d | Daily: dni=%d od=%d Open1=%.2f OpenBar=%.2f"
+                    " | sender: O=%.2f H=%.2f L=%.2f C=%.2f OpenDailyDnia=%.2f"
+                    " | agregat H=%.2f L=%.2f C=%.2f dni=%d | plik H=%.2f L=%.2f C=%.2f",
+                    (int)BarPeriod.HistoricalChartBarPeriodType, SrcDay, ReplayStatus,
+                    DailyOk ? "Daily" : (DailySrc > 0 ? "Daily-BRAK" : "nie-ustawiono"), State,
+                    DailyDays, DailyFirstDate, DailyOpenFirst, BarO,
+                    SrcO, SrcH, SrcL, AggC, DailyOpenDay,
+                    AggH, AggL, AggC, Days, FileH, FileL, FileC);
+                sc.AddMessageToLog(Msg, 0);
+            }
+        }
+
+        ShowWarning(sc, WarnCode);
 
         // --- Stan widziany przez wskazniki: przelicz, gdy sie zmienil (nalozono, zmieniono, cofnieto) ---
         // Revert na poczatku wywolania cofa dane bez przeliczenia, wiec po Stop replay (Applied = 0)
@@ -444,6 +635,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
     // --- SPRZATANIE: usuniecie studium / zamkniecie wykresu -------------------
     if (sc.LastCallToFunction)
     {
+        ShowWarning(sc, false);
         ReleaseCut(sc);     // przywroc ustawienia zakresu dat uzytkownika
         return;             // Revert wykonany powyzej
     }
@@ -480,7 +672,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
     // Gdy podano wykres zrodlowy, 'Bar od konca' jest ustawiany przez studium (Sierra nie ma
     // inputow read-only, wiec reczna zmiana jest nadpisywana). Dalej dziala zwykla sciezka:
     // zmiana 'Bar od konca' -> zaczytanie bara + obciecie wykresu do jego dnia.
-    // Wartosci H/L/C przy wykresie zrodlowym: patrz E3 w sekcji APPLY (wymaga Apply = Yes).
+    // Wartosci H/L/C przy wykresie zrodlowym: patrz E3 w sekcji APPLY.
     // Lista wykresow w Sierra nie ma pozycji "brak": wybor WLASNEGO wykresu = wylaczone.
     bool ForceNewBar = false;   // 1 = zaczytaj bar ponownie, nawet gdy 'Bar od konca' sie nie zmienilo
     int FollowChart = In_SourceChart.GetChartNumber();
@@ -535,7 +727,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
 
     // --- ZMIANA "BAR OD KONCA": zwolnij stary bar i zaczytaj nowy (reset do oryginalu) ---
     // Revert powyzej juz przywrocil stary bar. Zerujemy cel, a Load nizej wpisze do
-    // inputow oryginalne H/L/C nowego bara. Jesli Apply = Yes, zastosuje je ponownie (bez zmian).
+    // inputow oryginalne H/L/C nowego bara. Przy wykresie zrodlowym Apply zastosuje je ponownie.
     int& LastBarsBack = sc.GetPersistentInt(30);
     bool BarsBackChanged = (In_BarsBack.GetInt() != LastBarsBack) || ForceNewBar;
     LastBarsBack = In_BarsBack.GetInt();
@@ -577,7 +769,6 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         TargetIdx = -1;
         NeedResolve = 0;
         ReleaseCut(sc);     // wykres wraca do pelnych danych
-        In_Apply.SetYesNo(0);
         In_Restore.SetYesNo(0);
         return;
     }
@@ -585,8 +776,8 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
     // --- 3. LOAD / auto-capture -----------------------------------------------
     bool DoLoad = In_Load.GetYesNo() != 0;
 
-    if (In_Apply.GetYesNo() && !HasTarget)
-        DoLoad = true;      // Apply bez wczesniejszego Load: wybierz bar sam
+    if (FollowChart > 0 && !HasTarget)
+        DoLoad = true;      // Master chart bez wczesniejszego Load: wybierz bar sam
 
     if (ReloadNewBar)
         DoLoad = true;      // po zmianie 'Bar od konca' zaczytaj nowy bar
@@ -599,6 +790,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         DoLoad = true;
 
     bool CutJustRequested = false;
+    bool Warn = false;      // wartosci odrzucone: pokaz ostrzezenie na wykresie
 
     if (DoLoad)
     {
@@ -659,7 +851,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
     // --- 4. APPLY ----------------------------------------------------------------
     // Gdy wlasnie zlecilismy obciecie, wykres zaraz sie przeladuje, wiec Apply
     // wykona sie w nastepnym wywolaniu na swiezych danych.
-    if (In_Apply.GetYesNo() && HasTarget && !CutJustRequested)
+    if (FollowChart > 0 && HasTarget && !CutJustRequested)
     {
         int Idx = FindTargetIndex(sc, TargetIdx, TargetDT);
         if (Idx >= 0)       // bar docelowy zniknal (zmiana danych): nic nie nakladamy
@@ -713,6 +905,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
 
             // Walidacja: High >= Open, Close, Low  |  Low <= Open, Close
             bool Valid = (H >= O && H >= C && H >= L && L <= O && L <= C);
+            Warn = (ValuesReady && !Valid);
 
             // Brak wartosci do nalozenia (replay zatrzymany / inny dzien) albo wartosci niespojne
             // z Open: bar zostaje oryginalny.
@@ -751,4 +944,6 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
             }
         }
     }
+
+    ShowWarning(sc, Warn);
 }
