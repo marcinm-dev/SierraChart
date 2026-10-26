@@ -8,12 +8,14 @@ SCDLLName("D1BarReplay_HLC_Override_v1")
   Cel: nadpisac w PAMIECI High/Low/Close jednego bara D1, tak zeby wszystkie
   wskazniki liczyly sie na stanie z chwili wejscia. Plik .dly nie jest dotykany.
 
-  WERSJA: v0.2.x. Zweryfikowane przez uzytkownika (wersja z logami, commit 1e4baa2):
-  D1 (E1-E5) oraz Weekly/Monthly/Quarterly (E8) z replayem na senderze, Stop
-  replay, restart Sierry z zapisanym obcieciem i synchronizacja bez replay.
-  Nie przetestowane: Yearly, wykresy [C] na datach sprzed rollu oraz ta wersja
-  po usunieciu logow (tylko usuniete logi i martwe zmienne, logika bez zmian).
-  Lista usunietych logow: LOGI_usuniete.md.
+  WERSJA: v0.3.0. Zweryfikowane przez uzytkownika: D1 (E1-E5), Weekly/Monthly/Quarterly
+  (E8) z replayem na senderze, Stop replay, restart Sierry z zapisanym obcieciem,
+  synchronizacja bez replay, W/M/Q z dniami okresu z wykresu Daily (pole "Daily chart"),
+  czerwone napisy bledow (niezgodnosc Open, nie ustawiono Daily chart).
+  Nie przetestowane w Sierrze: dokladne sprawdzenie Open na D1, dzien bez bara w pliku
+  (napis 4), napis o niezgodnosci dat (5), log [D1], Yearly.
+  Co jest w tej wersji (hash -> zmiana) opisuje komunikat commita i tag v0.3.0.
+  Lista usunietych logow z wersji produkcyjnej: LOGI_usuniete.md.
 
   STATUS BUDOWY (patrz plan w D1BarReplay_PLAN.md):
     E1  Silnik nadpisania (reczny)        <- ZAMKNIETY
@@ -42,6 +44,8 @@ SCDLLName("D1BarReplay_HLC_Override_v1")
     Int  46 : licznik czyszczenia zastanej daty koncowej zakresu dat (D1, max 3)
     Int  49 : CutEnd         (data koncowa narzucona przez studium, 0 = brak obciecia)
     Int  50 : numer rysunku z czerwonym ostrzezeniem (0 = brak), patrz ShowWarning
+    Int  54 : D1: dzien mastera potwierdzony jako brakujacy w pelnych danych (0 = brak)
+    Int  55, 56 : D1: ostatnio zalogowane ostrzezenie i dzien (log tylko przy zmianie)
     Int  51..53 : W/M/Q/Y: ostatnio zalogowany dzien sendera, status replay, stan (log tylko przy zmianie)
     Input 18 : "Daily chart" (W/M/Q/Y), wykres dzienny z danymi dni okresu przed dniem replay
     Float 0..2 : Orig  H, L, C
@@ -139,7 +143,9 @@ static void ReleaseCut(SCStudyInterfaceRef sc)
 // Czerwony napis na srodku wykresu, gdy wartosci z mastera zostaly odrzucone (niezgodne z Open tego
 // wykresu, np. wykres ciagly [C] ze starszym kontraktem sprzed rolla): bar zostaje wtedy z danymi
 // z pliku, a nie ze stanem z replay. Code: 0 = usun napis, 1 = niezgodnosc Open (seria kontraktu),
-// 2 = brak danych z wykresu Daily (W/M/Q/Y), 3 = nie ustawiono wykresu Daily (W/M/Q/Y). Numer rysunku trzymany w persistent 50.
+// 2 = brak danych z wykresu Daily (W/M/Q/Y), 3 = nie ustawiono wykresu Daily (W/M/Q/Y),
+// 4 = brak bara dla dnia mastera w pliku (D1), 5 = niezgodnosc dat po swiecie (inny podzial dni
+// w senderze i w pliku). Numer rysunku trzymany w persistent 50.
 static void ShowWarning(SCStudyInterfaceRef sc, int Code)
 {
     bool Show = (Code != 0);
@@ -175,7 +181,13 @@ static void ShowWarning(SCStudyInterfaceRef sc, int Code)
     Tool.FontSize = 16;
     Tool.FontFace = sc.GetChartTextFontFaceName();
     // Studium dalej podaza za masterem i obcina wykres, ale NIE naklada H/L/C z replay: bar zostaje z pliku.
-    if (Code == 3)
+    if (Code == 5)
+        Tool.Text = "D1 Bar Replay - niezgodnosc dat (swieto: dni scalone w pliku).\n"
+                    "Narzedzie dziala niepoprawnie - dane z replay NIE nalozone";
+    else if (Code == 4)
+        Tool.Text = "D1 Bar Replay - brak bara dla dnia mastera w pliku (np. swieto).\n"
+                    "Wykres pokazuje poprzedni dzien - dane z replay NIE nalozone";
+    else if (Code == 3)
         Tool.Text = "D1 Bar Replay - Ustaw Daily chart.\n"
                     "Narzedzie dziala niepoprawnie - dane z replay NIE nalozone";
     else if (Code == 2)
@@ -410,6 +422,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         int   DailyDays = 0, DailyFirstDate = 0;
         float DailyOpenFirst = 0.0f, DailyOpenDay = 0.0f;
         float SrcO = 0.0f, SrcH = 0.0f, SrcL = 0.0f;
+        int   SrcPrevDay = 0, DailyPrevDate = 0;    // poprzedni dzien sendera / poprzedni bar wykresu Daily (rozpoznanie swieta)
         const float OpenTol = sc.TickSize * 0.5f;       // Open ma byc identyczny (pol ticka = tylko zaokraglenie float)
         int   ReplayStatus = (HtfSrc > 0 && HtfSrc != sc.ChartNumber) ? (int)sc.GetReplayStatusFromChart(HtfSrc) : 0;   // 0 = stop, 1 = gra, 2 = pauza
         int   WarnCode = 0;                 // 0 = brak, 1 = niezgodnosc Open, 2 = brak danych z wykresu Daily, 3 = nie ustawiono wykresu Daily
@@ -441,6 +454,8 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                 SrcO = HtfData[SC_OPEN][N - 1];
                 SrcH = HtfData[SC_HIGH][N - 1];
                 SrcL = HtfData[SC_LOW][N - 1];
+                if (N >= 2)
+                    SrcPrevDay = sc.GetTradingDayDateForChartNumber(HtfSrc, HtfTimes[N - 2]);
 
                 if (DailySrc > 0)
                 {
@@ -497,6 +512,8 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                             {
                                 DailyOpenDay = DData[SC_OPEN][DayIdx];
                                 DayOpenMismatch = (fabs((double)SrcO - (double)DailyOpenDay) > (double)OpenTol);
+                                if (DayIdx >= 1)
+                                    DailyPrevDate = DTimes[DayIdx - 1].GetDate();
                             }
 
                             AggH = (SrcH > DH) ? SrcH : DH;
@@ -514,7 +531,11 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         else if (DailySrc > 0 && !DailyOk && ReplayStatus != 0)
             WarnCode = 2;
         else if (DayOpenMismatch && ReplayStatus != 0)
-            WarnCode = 1;
+        {
+            // Po swiecie sender ma osobny dzien, a plik scala go z nastepnym: poprzednie dni sie roznia
+            bool DayStructureMismatch = (SrcPrevDay != 0 && DailyPrevDate != 0 && SrcPrevDay != DailyPrevDate);
+            WarnCode = DayStructureMismatch ? 5 : 1;
+        }
 
         // --- E8: nalozenie zagregowanych H/L/C na ostatni bar (czesciowy okres) ---
         // Warunki: wykres obciety do dnia sendera, replay gra lub pauza.
@@ -553,7 +574,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                     HasTarget = 1;
                     Applied   = 1;
                 }
-                else
+                else if (WarnCode == 0)
                     WarnCode = 1;
             }
         }
@@ -583,12 +604,12 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                 SCString Msg;
                 Msg.Format("[HTF] okres=%d dzien=%d status=%d zrodlo=%s stan=%d | Daily: dni=%d od=%d Open1=%.2f OpenBar=%.2f"
                     " | sender: O=%.2f H=%.2f L=%.2f C=%.2f OpenDailyDnia=%.2f"
-                    " | agregat H=%.2f L=%.2f C=%.2f dni=%d | plik H=%.2f L=%.2f C=%.2f",
+                    " | agregat H=%.2f L=%.2f C=%.2f dni=%d | plik H=%.2f L=%.2f C=%.2f | poprzedni dzien: sender=%d Daily=%d",
                     (int)BarPeriod.HistoricalChartBarPeriodType, SrcDay, ReplayStatus,
                     DailyOk ? "Daily" : (DailySrc > 0 ? "Daily-BRAK" : "nie-ustawiono"), State,
                     DailyDays, DailyFirstDate, DailyOpenFirst, BarO,
                     SrcO, SrcH, SrcL, AggC, DailyOpenDay,
-                    AggH, AggL, AggC, Days, FileH, FileL, FileC);
+                    AggH, AggL, AggC, Days, FileH, FileL, FileC, SrcPrevDay, DailyPrevDate);
                 sc.AddMessageToLog(Msg, 0);
             }
         }
@@ -675,6 +696,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
     // Wartosci H/L/C przy wykresie zrodlowym: patrz E3 w sekcji APPLY.
     // Lista wykresow w Sierra nie ma pozycji "brak": wybor WLASNEGO wykresu = wylaczone.
     bool ForceNewBar = false;   // 1 = zaczytaj bar ponownie, nawet gdy 'Bar od konca' sie nie zmienilo
+    int WarnCode = 0;           // czerwony napis: 1 = niezgodnosc Open / wartosci, 4 = brak bara dla dnia mastera
     int FollowChart = In_SourceChart.GetChartNumber();
     if (FollowChart == sc.ChartNumber)
         FollowChart = 0;
@@ -691,13 +713,54 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
             for (int i = sc.ArraySize - 1; i >= 0; i--)
                 if (sc.BaseDateTimeIn[i].GetDate() == FollowDay) { WantedIdx = i; break; }
 
+            // Dnia mastera nie ma w danych. Najpierw trzeba wykluczyc, ze po prostu go jeszcze nie zaladowano
+            // (obciete dane albo zapamietany zakres z poprzedniej sesji). Jesli dnia naprawde nie ma
+            // w pliku (swieto, brak danych), cofamy sie do ostatniego bara PRZED tym dniem: wykres jest
+            // obciety do poprzedniego dnia (brak lookahead), bez nakladania wartosci, z czerwonym napisem.
+            int& MissingDay = sc.GetPersistentInt(54);      // dzien mastera potwierdzony jako brakujacy w pelnych danych
+            int  LastDate   = sc.BaseDateTimeIn[sc.ArraySize - 1].GetDate();
+            bool NeedFullData = (WantedIdx < 0 && CutEnd != 0 && FollowDay > LastDate && MissingDay != FollowDay);
+            bool StaleRange   = (WantedIdx < 0 && CutEnd == 0 && sc.LoadChartDataByDateRange != 0 && sc.ChartDataEndDate != 0
+                && FollowDay > LastDate && sc.GetPersistentInt(46) < 3);
+
+            if (WantedIdx < 0 && !NeedFullData && !StaleRange)
+            {
+                for (int i = sc.ArraySize - 1; i >= 0; i--)
+                    if (sc.BaseDateTimeIn[i].GetDate() < FollowDay) { WantedIdx = i; break; }
+
+                if (WantedIdx >= 0)
+                {
+                    if (CutEnd == 0)
+                        MissingDay = FollowDay;
+                    if (sc.GetReplayStatusFromChart(FollowChart) != 0)
+                    {
+                        WarnCode = 4;       // napis tylko podczas replay (bez replay dzien mastera moze byc po prostu nowszy niz plik)
+
+                        int& LogWarn = sc.GetPersistentInt(55);
+                        int& LogDay  = sc.GetPersistentInt(56);
+                        if (LogWarn != 4 || LogDay != FollowDay)
+                        {
+                            LogWarn = 4; LogDay = FollowDay;
+                            SCString Msg;
+                            Msg.Format("[D1] ostrzezenie=4 brak bara dla dnia mastera=%d w pliku, uzyty bar=%d (ostatni bar w danych=%d)",
+                                FollowDay, (int)sc.BaseDateTimeIn[WantedIdx].GetDate(), LastDate);
+                            sc.AddMessageToLog(Msg, 0);
+                        }
+                    }
+                }
+            }
+
             if (WantedIdx >= 0)
             {
-                sc.GetPersistentInt(46) = 0;    // licznik czyszczenia zastanej daty koncowej zakresu
+                if (sc.BaseDateTimeIn[WantedIdx].GetDate() == FollowDay)
+                {
+                    sc.GetPersistentInt(46) = 0;    // licznik czyszczenia zastanej daty koncowej zakresu
+                    MissingDay = 0;
+                }
                 int WantedBarsBack = FullSize - 1 - WantedIdx;
                 if (In_BarsBack.GetInt() != WantedBarsBack)
                     In_BarsBack.SetInt(WantedBarsBack);
-                else if (HasTarget && TargetDT.GetDate() != FollowDay)
+                else if (HasTarget && TargetDT.GetDate() != sc.BaseDateTimeIn[WantedIdx].GetDate())
                 {
                     // 'Bar od konca' zgadza sie liczbowo, ale zaczytany bar jest z innego dnia niz dzien
                     // zrodla (po restarcie zapisane 'Bar od konca' wskazuje dzien na skroconych danych,
@@ -705,15 +768,13 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                     ForceNewBar = true;
                 }
             }
-            else if (CutEnd != 0 && FollowDay > sc.BaseDateTimeIn[sc.ArraySize - 1].GetDate())
+            else if (NeedFullData)
             {
                 // Dzien zrodla jest pozniej niz obciety zakres: wroc do pelnych danych,
                 // a w nastepnych wywolaniach bar zostanie znaleziony.
                 ReleaseCut(sc);
             }
-            else if (CutEnd == 0 && sc.LoadChartDataByDateRange != 0 && sc.ChartDataEndDate != 0
-                && FollowDay > sc.BaseDateTimeIn[sc.ArraySize - 1].GetDate()
-                && sc.GetPersistentInt(46) < 3)
+            else if (StaleRange)
             {
                 // Wykres zaladowany z zapisanym zakresem dat z data koncowa, a studium go nie narzucilo
                 // (CutEnd == 0): pozostalosc po poprzedniej sesji, wiec dane koncza sie przed dniem
@@ -790,8 +851,6 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         DoLoad = true;
 
     bool CutJustRequested = false;
-    bool Warn = false;      // wartosci odrzucone: pokaz ostrzezenie na wykresie
-
     if (DoLoad)
     {
         int Idx = FullSize - 1 - In_BarsBack.GetInt();      // numeracja wzgledem pelnych danych
@@ -859,6 +918,10 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
             TargetIdx = Idx;
 
             float H = 0.0f, L = 0.0f, C = 0.0f;
+            float SrcOpen = 0.0f;       // Open dnia z sendera (tylko przy wykresie zrodlowym)
+            int   SrcPrevDay = 0;       // dzien handlowy poprzedniego bara sendera (do rozpoznania swieta)
+            float SrcH = 0.0f, SrcL = 0.0f, SrcC = 0.0f;    // tylko do logu przy ostrzezeniu
+            int   SrcDayD1 = 0;         // dzien handlowy bara sendera (tylko do logu)
             bool ValuesReady = true;
 
             if (FollowChart > 0)
@@ -889,6 +952,10 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                             H = sc.RoundToTickSize(SrcData[SC_HIGH][SrcLast]);
                             L = sc.RoundToTickSize(SrcData[SC_LOW][SrcLast]);
                             C = sc.RoundToTickSize(SrcData[SC_LAST][SrcLast]);
+                            SrcOpen = SrcData[SC_OPEN][SrcLast];
+                            SrcH = H; SrcL = L; SrcC = C; SrcDayD1 = SrcDay;
+                            if (SrcN >= 2)
+                                SrcPrevDay = sc.GetTradingDayDateForChartNumber(FollowChart, SrcTimes[SrcN - 2]);
                             ValuesReady = true;
                         }
                     }
@@ -905,11 +972,38 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
 
             // Walidacja: High >= Open, Close, Low  |  Low <= Open, Close
             bool Valid = (H >= O && H >= C && H >= L && L <= O && L <= C);
-            Warn = (ValuesReady && !Valid);
+
+            // Zgodnosc serii kontraktow (tylko ze zrodlem): Open dnia z sendera ma byc identyczny z Open
+            // bara receivera (np. wykres [C] sprzed rolla ma Open ze starszego kontraktu). Samo sprawdzenie
+            // High/Low wzgledem Open nie wystarcza: szeroki zakres dnia moze zmiescic przesuniety Open.
+            bool OpenMismatch = (FollowChart > 0 && ValuesReady && !SamePrice(sc, SrcOpen, O));
+
+            if (ValuesReady && (!Valid || OpenMismatch))
+            {
+                // Niezgodny Open po swiecie: sender ma osobny dzien (np. Labour Day), a plik scala go z nastepnym.
+                // Wtedy poprzedni dzien sendera jest inny niz poprzedni bar receivera: osobny komunikat.
+                bool DayStructureMismatch = (OpenMismatch && SrcPrevDay != 0 && Idx >= 1
+                    && SrcPrevDay != sc.BaseDateTimeIn[Idx - 1].GetDate());
+                WarnCode = DayStructureMismatch ? 5 : 1;
+
+                // Log przy zmianie ostrzezenia lub dnia (nie co tick): do diagnozy niezgodnosci
+                int& LogWarn = sc.GetPersistentInt(55);
+                int& LogDay  = sc.GetPersistentInt(56);
+                if (LogWarn != WarnCode || LogDay != SrcDayD1)
+                {
+                    LogWarn = WarnCode; LogDay = SrcDayD1;
+                    SCString Msg;
+                    Msg.Format("[D1] ostrzezenie=%d dzien sendera=%d bar receivera=%d (poprzedni bar=%d, poprzedni dzien sendera=%d)"
+                        " | sender O=%.2f H=%.2f L=%.2f C=%.2f | bar receivera O=%.2f | wartosci poprawne=%d Open zgodny=%d",
+                        WarnCode, SrcDayD1, TargetDT.GetDate(), (Idx >= 1) ? (int)sc.BaseDateTimeIn[Idx - 1].GetDate() : 0, SrcPrevDay,
+                        SrcOpen, SrcH, SrcL, SrcC, O, Valid ? 1 : 0, OpenMismatch ? 0 : 1);
+                    sc.AddMessageToLog(Msg, 0);
+                }
+            }
 
             // Brak wartosci do nalozenia (replay zatrzymany / inny dzien) albo wartosci niespojne
             // z Open: bar zostaje oryginalny.
-            if (ValuesReady && Valid)
+            if (ValuesReady && Valid && !OpenMismatch)
             {
                 // Bar jest czysty (po Revert) - zapamietaj oryginal i zapisz nowe wartosci
                 OrigH = sc.BaseData[SC_HIGH][Idx];
@@ -945,5 +1039,5 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         }
     }
 
-    ShowWarning(sc, Warn);
+    ShowWarning(sc, WarnCode);
 }

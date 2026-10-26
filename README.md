@@ -29,6 +29,7 @@ Each chart keeps its own copy of the data in RAM, so a modification on one chart
 
 - Sierra Chart (developed on version 2908, 64-bit) with ACSIL custom study builds enabled.
 - A sender chart and a receiver chart for the same symbol **in the same chartbook**.
+- The sender (D1 intraday only) and the receivers (D1 historical, W/M/Q/Y) should be **continuous `[C]`** charts of the same symbol and series, so that the master and the file data come from the same contract. Before a contract roll a `[C]` sender in replay may deliver a single contract (e.g. ESZ26) while a `[C]` file chart still uses the older one (ESU26); the study then shows a red "Open price" error and overwrites nothing. After the roll `[C]` works. Leave "Date Range To (YYYY-MM-DD)" **empty** on these charts: the study sets and releases the end date itself, and an end date typed by hand is treated as a leftover and cleared.
 
 ## Build and set up
 
@@ -52,7 +53,9 @@ All other inputs have no name, so Sierra Chart hides them. They still exist (ind
 
 ## Known limitations
 
-- Not tested: yearly charts, continuous (`[C]`) charts on dates before the contract roll (the older contract's prices differ from the sender's by tens of points, so the study rejects the values, shows a red error text in the center of the chart and the bar keeps its settlement values), a replayed day that has no bar in the `.dly` file.
+- Contract series check on D1 charts: the sender's Open of the replayed day must be identical to the receiver bar's Open. On continuous (`[C]`) charts before the contract roll the older contract's prices differ from the sender's by tens of points, so the study overwrites nothing, shows a red error text in the center of the chart and the bar keeps its settlement values.
+- A replayed day that has no bar in the `.dly` file (holiday, missing data): during the replay the chart is cut to the last bar before that day, nothing is overwritten and a red text says so.
+- Not tested: yearly charts, continuous (`[C]`) charts on dates before the contract roll, the "day without a bar" handling and the exact Open check on D1.
 - The sender usually holds only a few months of daily history, so quarterly/yearly aggregates may lack data (the study then leaves the bar untouched).
 - The native "last price" label on the price scale comes from symbol data and does not follow the override; hide it in chart settings if it gets in the way of screenshots.
 - Designed for historical data. Live charts overwrite the last bar with incoming ticks.
