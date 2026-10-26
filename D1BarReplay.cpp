@@ -8,20 +8,22 @@ SCDLLName("D1BarReplay_HLC_Override_v1")
   Cel: nadpisac w PAMIECI High/Low/Close jednego bara D1, tak zeby wszystkie
   wskazniki liczyly sie na stanie z chwili wejscia. Plik .dly nie jest dotykany.
 
-  WERSJA: v0.1.0-prototype  (E1 zamkniety i zweryfikowany recznie w Sierra Chart;
-  E5 w wczesnej wersji tez zweryfikowany: obciecie/zdjecie obciecia, Restore,
-  usuniecie studium).
+  WERSJA: v0.2.x. Zweryfikowane przez uzytkownika (wersja z logami, commit 1e4baa2):
+  D1 (E1-E5) oraz Weekly/Monthly/Quarterly (E8) z replayem na senderze, Stop
+  replay, restart Sierry z zapisanym obcieciem i synchronizacja bez replay.
+  Nie przetestowane: Yearly, wykresy [C] na datach sprzed rollu oraz ta wersja
+  po usunieciu logow (tylko usuniete logi i martwe zmienne, logika bez zmian).
+  Lista usunietych logow: LOGI_usuniete.md.
 
   STATUS BUDOWY (patrz plan w D1BarReplay_PLAN.md):
-    E1  Silnik nadpisania (reczny)        <- ZAMKNIETY (zaliczone w tescie)
-    E2  Odczyt wykresu zrodlowego (diag.) <- ZAIMPLEMENTOWANE (tylko log, bez zapisu)
-    E3  Polaczenie zrodlo -> nadpisanie   <- WCZESNA WERSJA (do testu): Apply = Yes + wykres zrodlowy
+    E1  Silnik nadpisania (reczny)        <- ZAMKNIETY
+    E3  Polaczenie zrodlo -> nadpisanie   <- ZWERYFIKOWANE: Apply = Yes + wykres zrodlowy
                                              => H/L/C z ostatniego bara sendera, gdy replay gra/pauza
-    E4  Przeskok dnia                     <- CZESCIOWO: receiver podaza za DNIEM wykresu zrodlowego
-                                             (obciecie + zaczytanie bara). Wartosci H/L/C z sendera = E3.
-    E5  Obciecie danych (lookahead)       <- WCZESNA WERSJA: obciecie do dnia bara wybranego
-                                             parametrem 'Bar od konca' (do przetestowania)
-    E6  Zabezpieczenia                    <- TODO
+    E4  Przeskok dnia                     <- ZWERYFIKOWANE: receiver podaza za DNIEM wykresu zrodlowego
+                                             (obciecie + zaczytanie bara).
+    E5  Obciecie danych (lookahead)       <- ZWERYFIKOWANE: obciecie do dnia bara (z sendera lub
+                                             parametru 'Bar od konca'), ponowne narzucenie po reloadzie
+    E8  Wykresy W/M/Q/Y                   <- ZWERYFIKOWANE dla W, M i Q (agregat dni okresu z sendera)
 
   'Bar od konca' liczony jest wzgledem PELNYCH danych wykresu (bez obciecia):
   0 = ostatni bar pliku, 1 = przedostatni itd. Po obcieciu bar docelowy jest
@@ -31,35 +33,22 @@ SCDLLName("D1BarReplay_HLC_Override_v1")
     Int   0 : Applied        (1 = nadpisanie jest wpisane w dane)
     Int   1 : TargetIndex    (szybka sciezka, prawda jest w TargetDateTime)
     Int   2 : HasTarget
-    Int  10 : Src_LastN      (E2)
-    Int  20..24 / Float 20..22 : migawka inputow (diagnostyka E1)
     Int  30 : LastBarsBack
     Int  32 : Initialized    (0 = pierwsze wywolanie: auto-zaczytanie bara)
-    Int  33 : ostatni zalogowany dzien zrodla nieobecny w danych receivera (E4-lite)
     Int  34 : liczba ponowien narzucenia zakresu dat po przeladowaniu wykresu
-    Int  35 : ostatni zalogowany status replay sendera (E3)
-    Int  36..37 : diagnostyka wykresu wyzszego okresu (ostatni dzien sendera, ArraySize)
-    Int  38 : ostatni zalogowany status replay sendera na wykresie W/M/Q/Y (E8)
-    Int  39 : komunikat o nieaktywnosci na wykresie intraday zalogowany
     Int  40 : NeedResolve    (1 = czekamy na pelne dane, potem zaczytaj bar)
     Int  41 : FullSize       (liczba barow pelnych danych)
     Int  42..44 : zapamietane ustawienia zakresu dat uzytkownika (ByRange, Start, End)
+    Int  46 : licznik czyszczenia zastanej daty koncowej zakresu dat (D1, max 3)
     Int  49 : CutEnd         (data koncowa narzucona przez studium, 0 = brak obciecia)
     Float 0..2 : Orig  H, L, C
     Float 3..5 : Applied H, L, C
-    Float 10..13 : Src_LastO/H/L/C (E2)
-    Float 23..25 : ostatnio zalogowany Apply | 26..28 : ostatnio odrzucone H, L, C
+    Float 23..25 : D1: ostatnio nalozone H, L, C (reakcja tylko na zmiane) |
+                   W/M/Q/Y: stan widziany przez wskazniki (nalozone H/L/C albo 0,0,0 = oryginal)
     SCDateTime 0 : TargetDateTime
 ============================================================================*/
 
 // --- Pomocnicze ------------------------------------------------------------
-
-static void LogMsg(SCStudyInterfaceRef sc, const char* Text)
-{
-    SCString Msg;
-    Msg.Format("D1BarReplay: %s", Text);
-    sc.AddMessageToLog(Msg, 0);
-}
 
 static bool SamePrice(SCStudyInterfaceRef sc, float A, float B)
 {
@@ -104,9 +93,23 @@ static void RequestCut(SCStudyInterfaceRef sc, int EndDate)
 
     if (CutEnd == 0)    // pierwsze obciecie: zapamietaj ustawienia uzytkownika
     {
-        sc.GetPersistentInt(42) = sc.LoadChartDataByDateRange;
-        sc.GetPersistentInt(43) = sc.ChartDataStartDate;
-        sc.GetPersistentInt(44) = sc.ChartDataEndDate;
+        int ByRange = sc.LoadChartDataByDateRange;
+        int StartD  = sc.ChartDataStartDate;
+        int EndD    = sc.ChartDataEndDate;
+
+        // Zakres z data koncowa, zastany gdy studium nie trzyma obciecia (CutEnd == 0), to pozostalosc
+        // po poprzedniej sesji: chartbook zapisany z aktywnym obcieciem (log 2026-10-26: po restarcie
+        // Daily #2 mial dane tylko do 9.10 i po zdjeciu obciecia tam zostawal). Nie traktujemy go jako
+        // ustawienia uzytkownika: data koncowa jest odrzucana. Tryb zakresu zostaje wlaczony:
+        // wg dokumentacji Sierry pusta data poczatkowa = pierwsza dostepna data pliku, pusta data
+        // koncowa = ostatnia dostepna data, czyli pelna historia (log 2026-10-26: wylaczenie trybu
+        // zakresu dawalo na Daily #2 tylko 138 barow po zdjeciu obciecia).
+        if (ByRange != 0 && EndD != 0)
+            EndD = 0;
+
+        sc.GetPersistentInt(42) = ByRange;
+        sc.GetPersistentInt(43) = StartD;
+        sc.GetPersistentInt(44) = EndD;
     }
 
     if (sc.GetPersistentInt(42) == 0)
@@ -167,63 +170,48 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
     SCInputRef In_Restore     = sc.Input[5];
     SCInputRef In_BarsBack    = sc.Input[6];
     SCInputRef In_SourceChart = sc.Input[7];
-    SCInputRef In_Diag        = sc.Input[8];
+    SCInputRef In_Unused8     = sc.Input[8];    // dawniej "Diagnostyka w logu"; slot zostaje, zeby nie przesunac inputow
     SCInputRef In_Cut         = sc.Input[9];
     // Inputy 10-17: pola [RO] (patrz WriteSlot)
+    // W oknie ustawien widoczne sa tylko In_Apply ("TURN ON/OFF") i In_SourceChart ("Master chart");
+    // reszta nie ma nazwy, wiec jest ukryta (patrz SetDefaults).
 
     if (sc.SetDefaults)
     {
         sc.GraphName = "D1 Bar Replay (HLC Override)";
-        sc.StudyDescription = "Nadpisuje H/L/C jednego bara w pamieci wykresu. Nie zapisuje do plikow danych.";
+        sc.StudyDescription = "Nadpisuje H/L/C jednego bara w pamieci wykresu. Nie zapisuje do plikow danych. "
+            "Master chart: wybierz wykres z Bar Replay; wybranie wlasnego wykresu = wylaczone.";
         sc.AutoLoop = 0;            // manual looping: jedno wywolanie, nie petla po barach
         sc.UpdateAlways = 1;        // potrzebne do odpytywania wykresu zrodlowego (E2+)
         sc.GraphRegion = 0;
         sc.CalculationPrecedence = STD_PREC_LEVEL;   // kolejnosc: studium ma byc NA GORZE listy studiow
+        sc.ProcessStudyUnsetInputs = 1;     // wiele ukrytych (bez nazwy) inputow z rzedu
 
-        In_Apply.Name = "Apply Override";
+        // Widoczne dla uzytkownika sa tylko dwa inputy. Input bez ustawionej nazwy (Name) Sierra
+        // nie pokazuje w oknie ustawien studium, ale nadal istnieje i dziala w kodzie.
+        In_Apply.Name = "TURN ON/OFF";
         In_Apply.SetYesNo(0);
 
-        In_Load.Name = "Load Bar Into Inputs";
-        In_Load.SetYesNo(0);
-
-        In_High.Name = "High";
-        In_High.SetFloat(0.0f);
-
-        In_Low.Name = "Low";
-        In_Low.SetFloat(0.0f);
-
-        In_Close.Name = "Close";
-        In_Close.SetFloat(0.0f);
-
-        In_Restore.Name = "Restore Original And Reset";
-        In_Restore.SetYesNo(0);
-
-        In_BarsBack.Name = "Bar od konca pelnych danych (0 = ostatni bar pliku; przy wykresie zrodlowym ustawiany automatycznie)";
-        In_BarsBack.SetInt(0);
-        In_BarsBack.SetIntLimits(0, 100000);
-
-        In_SourceChart.Name = "E2: Wykres zrodlowy (wybierz WLASNY wykres = wylaczone)";
+        In_SourceChart.Name = "Master chart";
         In_SourceChart.SetChartNumber(0);
 
-        In_Diag.Name = "Diagnostyka w logu";
-        In_Diag.SetYesNo(1);
-
-        In_Cut.Name = "Cofnij wykres do dnia wybranego bara (brak lookahead)";
+        // Ukryte (bez nazwy): reczny tryb, bar od konca, obciecie, pola [RO]
+        In_Load.SetYesNo(0);
+        In_High.SetFloat(0.0f);
+        In_Low.SetFloat(0.0f);
+        In_Close.SetFloat(0.0f);
+        In_Restore.SetYesNo(0);
+        In_BarsBack.SetInt(0);
+        In_BarsBack.SetIntLimits(0, 100000);
+        In_Unused8.SetYesNo(0);
         In_Cut.SetYesNo(1);
 
         // Pola tylko do odczytu (wypelnia je studium): oryginaly zaczytanych barow
-        const char* SlotNames[2] = { "[RO] Zaczytany #1 (ostatni)", "[RO] Zaczytany #2 (poprzedni)" };
-        for (int s = 0; s < 2; s++)
+        for (int Base = SLOT1_BASE; Base <= SLOT2_BASE; Base += SLOT2_BASE - SLOT1_BASE)
         {
-            int Base = (s == 0) ? SLOT1_BASE : SLOT2_BASE;
-
-            sc.Input[Base].Name.Format("%s data", SlotNames[s]);
             sc.Input[Base].SetString("");
-            sc.Input[Base + 1].Name.Format("%s High", SlotNames[s]);
             sc.Input[Base + 1].SetFloat(0.0f);
-            sc.Input[Base + 2].Name.Format("%s Low", SlotNames[s]);
             sc.Input[Base + 2].SetFloat(0.0f);
-            sc.Input[Base + 3].Name.Format("%s Close", SlotNames[s]);
             sc.Input[Base + 3].SetFloat(0.0f);
         }
 
@@ -270,13 +258,6 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
     {
         if (CutEnd != 0)
             ReleaseCut(sc);
-
-        int& IntradayLogged = sc.GetPersistentInt(39);
-        if (!IntradayLogged && !sc.LastCallToFunction)
-        {
-            IntradayLogged = 1;
-            LogMsg(sc, "wykres intraday: studium jest nieaktywne (dziala na D1 i W/M/Q/Y).");
-        }
         return;
     }
 
@@ -305,7 +286,6 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
 
         // --- Cofanie daty: wykres wyzszego okresu konczy sie na dniu sendera ---
         // Ostatni bar jest wtedy czesciowym okresem (np. tygodniem do dnia sendera).
-        // Wartosci H/L/C (agregacja dni okresu) dojda w E8 po sprawdzeniu logu [HTF].
         if (HtfSrc <= 0 || HtfSrc == sc.ChartNumber || !In_Cut.GetYesNo())
         {
             ReleaseCut(sc);     // zrodlo wylaczone albo obciecie wylaczone: pelne dane
@@ -322,28 +302,19 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                 bool InEffect = (sc.LoadChartDataByDateRange == 1 && sc.ChartDataEndDate == WantedEnd);
 
                 if (CutEnd != WantedEnd)
-                {
                     RequestCut(sc, WantedEnd);
-                    if (In_Diag.GetYesNo())
-                    {
-                        SCString Msg;
-                        Msg.Format("D1BarReplay[HTF]: obciecie zakresu dat do dnia sendera (EndDate=%d), ArraySize=%d", WantedEnd, sc.ArraySize);
-                        sc.AddMessageToLog(Msg, 0);
-                    }
-                }
                 else if (!InEffect && HtfReasserts < 3)
                 {
                     // Przeladowanie wykresu moglo przywrocic pelne dane: narzuc zakres ponownie
                     HtfReasserts++;
                     RequestCut(sc, WantedEnd);
-                    LogMsg(sc, "[HTF] zakres dat nie obowiazuje po przeladowaniu: narzucam ponownie.");
                 }
                 else if (InEffect)
                     HtfReasserts = 0;
             }
         }
 
-        // --- Dane sendera i agregat dni biezacego okresu (dla zapisu E8 i diagnostyki) ---
+        // --- Dane sendera i agregat dni biezacego okresu (dla zapisu E8) ---
         // Agregat: High = max High, Low = min Low dni okresu do dnia sendera, Close = biezaca
         // cena sendera. Poczatek okresu liczymy z POLUDNIA dnia handlowego, bo bar sendera dnia
         // handlowego zaczyna sie dzien wczesniej wieczorem (np. 1.10 zaczyna sie 30.09 18:00,
@@ -390,7 +361,8 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                     Days++;
                 }
 
-                // Historia sendera musi siegac poczatku okresu (kwartal/rok moga jej nie miec)
+                // Historia sendera musi siegac poczatku okresu (kwartal/rok moga jej nie miec).
+                // Brak pokrycia (np. rok): nic nie nakladamy, ostatni bar zostaje z pliku.
                 int OldestDay = sc.GetTradingDayDateForChartNumber(HtfSrc, HtfTimes[0]);
                 bool Covered = ReachedBefore || (OldestDay - PeriodStart.GetDate() <= 2);
                 HaveAgg = (Days > 0 && Covered);
@@ -402,19 +374,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         // Przy zatrzymanym replay bar zostaje oryginalny (Revert wykonany na poczatku bloku).
         if (In_Apply.GetYesNo() && HaveAgg && CutEnd != 0 && CutEnd == SrcDay && sc.ArraySize > 0)
         {
-            int Status = (int)sc.GetReplayStatusFromChart(HtfSrc);
-            int& HtfLastStatus = sc.GetPersistentInt(38);
-            if (Status != HtfLastStatus)
-            {
-                HtfLastStatus = Status;
-                if (In_Diag.GetYesNo())
-                {
-                    SCString Msg;
-                    Msg.Format("D1BarReplay[HTF]: status replay sendera ch%d = %d (0=stop, 1=gra, 2=pauza)%s",
-                        HtfSrc, Status, Status == 0 ? " - wartosci sendera nie sa nakladane" : "");
-                    sc.AddMessageToLog(Msg, 0);
-                }
-            }
+            int Status = (int)sc.GetReplayStatusFromChart(HtfSrc);     // 0 = stop, 1 = gra, 2 = pauza
 
             int Last  = sc.ArraySize - 1;
             int Stamp = sc.BaseDateTimeIn[Last].GetDate();
@@ -440,34 +400,6 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                     TargetDT  = sc.BaseDateTimeIn[Last];
                     HasTarget = 1;
                     Applied   = 1;
-
-                    // Przeliczenie wskaznikow ustawia blok "stan widziany przez wskazniki" nizej.
-                    bool Changed = (H != sc.GetPersistentFloat(23)
-                        || L != sc.GetPersistentFloat(24)
-                        || C != sc.GetPersistentFloat(25));
-
-                    if (Changed)
-                    {
-                        if (In_Diag.GetYesNo())
-                        {
-                            SCString Msg;
-                            Msg.Format("D1BarReplay[HTF]: APPLY bar=%s (%d dni okresu)  orig H=%.2f L=%.2f C=%.2f -> nowe H=%.2f L=%.2f C=%.2f",
-                                sc.FormatDateTime(sc.BaseDateTimeIn[Last]).GetChars(), Days,
-                                OrigH, OrigL, OrigC, H, L, C);
-                            sc.AddMessageToLog(Msg, 0);
-                        }
-                    }
-                }
-                else
-                {
-                    float& RejH = sc.GetPersistentFloat(26);
-                    if (H != RejH)
-                    {
-                        RejH = H;
-                        SCString Msg;
-                        Msg.Format("D1BarReplay[HTF]: ODRZUCONO H=%.2f L=%.2f C=%.2f (Open=%.2f) - niespojne wartosci. Bar zostaje oryginalny.", H, L, C, O);
-                        sc.AddMessageToLog(Msg, 0);
-                    }
                 }
             }
         }
@@ -489,78 +421,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
             }
         }
 
-        // --- Diagnostyka [HTF] przy zmianie dnia sendera lub liczby barow ---
-        if (In_Diag.GetYesNo() && HaveAgg && sc.ArraySize > 0)
-        {
-            int& LastDay  = sc.GetPersistentInt(36);
-            int& LastSize = sc.GetPersistentInt(37);
-
-            if (SrcDay != LastDay || sc.ArraySize != LastSize)
-            {
-                LastDay = SrcDay;
-                LastSize = sc.ArraySize;
-
-                int Last = sc.ArraySize - 1;
-                SCString Msg;
-                Msg.Format("D1BarReplay[HTF]: okres=%d (2=W 3=M 4=Q 5=Y) ArraySize=%d | ostatnie bary: [%d]=%s [%d]=%s | dzien sendera=%d, poczatek okresu=%s | agregat z sendera (%d dni): H=%.2f L=%.2f C=%.2f | ostatni bar tego wykresu: O=%.2f H=%.2f L=%.2f C=%.2f",
-                    (int)BarPeriod.HistoricalChartBarPeriodType, sc.ArraySize,
-                    Last, sc.FormatDateTime(sc.BaseDateTimeIn[Last]).GetChars(),
-                    Last > 0 ? Last - 1 : 0, sc.FormatDateTime(sc.BaseDateTimeIn[Last > 0 ? Last - 1 : 0]).GetChars(),
-                    SrcDay, sc.FormatDateTime(PeriodStart).GetChars(),
-                    Days, AggH, AggL, AggC,
-                    sc.BaseData[SC_OPEN][Last], sc.BaseData[SC_HIGH][Last],
-                    sc.BaseData[SC_LOW][Last], sc.BaseData[SC_LAST][Last]);
-                sc.AddMessageToLog(Msg, 0);
-            }
-        }
-
         return;     // wykresy wyzszego okresu nie przechodza dalej (logika dzienna nie dotyczy)
-    }
-
-    // --- DIAGNOSTYKA E1: log przy kazdej zmianie inputow widzianych przez studium ---
-    if (In_Diag.GetYesNo() && !sc.LastCallToFunction)
-    {
-        int&   SnapN = sc.GetPersistentInt(20);   // 0 = pierwsze wywolanie
-        int&   SnapA = sc.GetPersistentInt(21);
-        int&   SnapL = sc.GetPersistentInt(22);
-        int&   SnapR = sc.GetPersistentInt(23);
-        int&   SnapB = sc.GetPersistentInt(24);
-        float& SnapH = sc.GetPersistentFloat(20);
-        float& SnapLo = sc.GetPersistentFloat(21);
-        float& SnapC = sc.GetPersistentFloat(22);
-
-        int   A = In_Apply.GetYesNo(),  L = In_Load.GetYesNo(), R = In_Restore.GetYesNo();
-        int   B = In_BarsBack.GetInt();
-        float H = In_High.GetFloat(), Lo = In_Low.GetFloat(), C = In_Close.GetFloat();
-
-        // W trybie z wykresem zrodlowym H/L/C inputow zmieniaja sie co tick (studium je odswieza):
-        // nie logujemy tych zmian, zeby nie dublowac linii APPLY.
-        int  SnapSrc = In_SourceChart.GetChartNumber();
-        bool SrcMode = (SnapSrc > 0 && SnapSrc != sc.ChartNumber);
-
-        if (SnapN == 0 || A != SnapA || L != SnapL || R != SnapR || B != SnapB
-            || (!SrcMode && (H != SnapH || Lo != SnapLo || C != SnapC)))
-        {
-            SnapN = 1; SnapA = A; SnapL = L; SnapR = R; SnapB = B;
-            SnapH = H; SnapLo = Lo; SnapC = C;
-
-            SCString Msg;
-            Msg.Format("D1BarReplay[E1]: inputy: Apply=%d Load=%d Restore=%d BarOdKonca=%d H=%.2f L=%.2f C=%.2f | Applied=%d HasTarget=%d ArraySize=%d FullSize=%d CutEnd=%d fullRecalc=%d",
-                A, L, R, B, H, Lo, C, Applied, HasTarget, sc.ArraySize, FullSize, CutEnd, (int)sc.IsFullRecalculation);
-            sc.AddMessageToLog(Msg, 0);
-        }
-
-        // Zmiana liczby barow = przeladowanie wykresu (np. po obcieciu zakresu dat)
-        int& LastSize = sc.GetPersistentInt(25);
-        if (sc.ArraySize != LastSize)
-        {
-            SCString Msg;
-            Msg.Format("D1BarReplay[E5]: ArraySize %d -> %d (CutEnd=%d, ostatni bar=%s)",
-                LastSize, sc.ArraySize, CutEnd,
-                sc.ArraySize > 0 ? sc.FormatDateTime(sc.BaseDateTimeIn[sc.ArraySize - 1]).GetChars() : "-");
-            sc.AddMessageToLog(Msg, 0);
-            LastSize = sc.ArraySize;
-        }
     }
 
     // --- 1. REVERT: zawsze zaczynamy od czystych danych -----------------------
@@ -576,8 +437,6 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         {
             WriteBar(sc, Idx, OrigH, OrigL, OrigC);
         }
-        else if (In_Diag.GetYesNo())
-            LogMsg(sc, "Revert pominiety: dane przeladowane lub bar nie znaleziony.");
 
         Applied = 0;
     }
@@ -596,10 +455,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
 
     // --- Wylaczenie opcji obciecia: zdejmij obciecie ---------------------------
     if (!In_Cut.GetYesNo() && CutEnd != 0)
-    {
         ReleaseCut(sc);
-        LogMsg(sc, "Obciecie wylaczone: przywrocono zakres dat wykresu.");
-    }
 
     // --- Przeladowanie wykresu (np. Reload and Recalculate) moze zignorowac narzucony zakres ---
     // Log z 2026-10-25 11:10:10: ArraySize 1281 -> 1286 przy CutEnd != 0, czyli wykres wrocil do
@@ -614,13 +470,6 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
             {
                 Reasserts++;
                 RequestCut(sc, CutEnd);
-                if (In_Diag.GetYesNo())
-                    LogMsg(sc, "Wykres wrocil do pelnych danych (przeladowanie): narzucam zakres dat ponownie.");
-            }
-            else if (Reasserts == 3)
-            {
-                Reasserts++;
-                LogMsg(sc, "Nie udalo sie utrzymac zakresu dat po 3 probach - przerywam ponawianie.");
             }
         }
         else
@@ -633,6 +482,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
     // zmiana 'Bar od konca' -> zaczytanie bara + obciecie wykresu do jego dnia.
     // Wartosci H/L/C przy wykresie zrodlowym: patrz E3 w sekcji APPLY (wymaga Apply = Yes).
     // Lista wykresow w Sierra nie ma pozycji "brak": wybor WLASNEGO wykresu = wylaczone.
+    bool ForceNewBar = false;   // 1 = zaczytaj bar ponownie, nawet gdy 'Bar od konca' sie nie zmienilo
     int FollowChart = In_SourceChart.GetChartNumber();
     if (FollowChart == sc.ChartNumber)
         FollowChart = 0;
@@ -651,17 +501,16 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
 
             if (WantedIdx >= 0)
             {
+                sc.GetPersistentInt(46) = 0;    // licznik czyszczenia zastanej daty koncowej zakresu
                 int WantedBarsBack = FullSize - 1 - WantedIdx;
                 if (In_BarsBack.GetInt() != WantedBarsBack)
-                {
                     In_BarsBack.SetInt(WantedBarsBack);
-                    if (In_Diag.GetYesNo())
-                    {
-                        SCString Msg;
-                        Msg.Format("D1BarReplay[E4]: zrodlo ch%d dzien=%d -> bar receivera idx=%d (Bar od konca=%d)",
-                            FollowChart, FollowDay, WantedIdx, WantedBarsBack);
-                        sc.AddMessageToLog(Msg, 0);
-                    }
+                else if (HasTarget && TargetDT.GetDate() != FollowDay)
+                {
+                    // 'Bar od konca' zgadza sie liczbowo, ale zaczytany bar jest z innego dnia niz dzien
+                    // zrodla (po restarcie zapisane 'Bar od konca' wskazuje dzien na skroconych danych,
+                    // a po zaladowaniu pelnych danych ta sama liczba daje dzien zrodla).
+                    ForceNewBar = true;
                 }
             }
             else if (CutEnd != 0 && FollowDay > sc.BaseDateTimeIn[sc.ArraySize - 1].GetDate())
@@ -669,19 +518,17 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                 // Dzien zrodla jest pozniej niz obciety zakres: wroc do pelnych danych,
                 // a w nastepnych wywolaniach bar zostanie znaleziony.
                 ReleaseCut(sc);
-                if (In_Diag.GetYesNo())
-                    LogMsg(sc, "Zrodlo: dzien poza obcietym zakresem, zdejmuje obciecie.");
             }
-            else
+            else if (CutEnd == 0 && sc.LoadChartDataByDateRange != 0 && sc.ChartDataEndDate != 0
+                && FollowDay > sc.BaseDateTimeIn[sc.ArraySize - 1].GetDate()
+                && sc.GetPersistentInt(46) < 3)
             {
-                int& LoggedDay = sc.GetPersistentInt(33);
-                if (LoggedDay != FollowDay)
-                {
-                    LoggedDay = FollowDay;
-                    SCString Msg;
-                    Msg.Format("D1BarReplay[E4]: dnia zrodla (%d) nie ma w danych receivera - bez zmian.", FollowDay);
-                    sc.AddMessageToLog(Msg, 0);
-                }
+                // Wykres zaladowany z zapisanym zakresem dat z data koncowa, a studium go nie narzucilo
+                // (CutEnd == 0): pozostalosc po poprzedniej sesji, wiec dane koncza sie przed dniem
+                // mastera. Czyscimy date koncowa (pusta = do ostatniej dostepnej daty pliku).
+                // Limit prob chroni przed petla przeladowan.
+                sc.GetPersistentInt(46)++;
+                sc.ChartDataEndDate = 0;
             }
         }
     }
@@ -690,7 +537,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
     // Revert powyzej juz przywrocil stary bar. Zerujemy cel, a Load nizej wpisze do
     // inputow oryginalne H/L/C nowego bara. Jesli Apply = Yes, zastosuje je ponownie (bez zmian).
     int& LastBarsBack = sc.GetPersistentInt(30);
-    bool BarsBackChanged = (In_BarsBack.GetInt() != LastBarsBack);
+    bool BarsBackChanged = (In_BarsBack.GetInt() != LastBarsBack) || ForceNewBar;
     LastBarsBack = In_BarsBack.GetInt();
 
     // Pierwsze wywolanie po dodaniu studium: zaczytaj bar wskazany przez 'Bar od konca'
@@ -710,11 +557,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         {
             HasTarget = 0;      // Revert powyzej przywrocil stary bar
             TargetIdx = -1;
-            if (In_Diag.GetYesNo())
-                LogMsg(sc, "Zmiana 'Bar od konca': stary bar przywrocony, zaczytuje nowy.");
         }
-        else if (In_Diag.GetYesNo())
-            LogMsg(sc, "Zmiana 'Bar od konca': zaczytuje nowy bar.");
     }
 
     // --- 2. RESTORE ------------------------------------------------------------
@@ -736,7 +579,6 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         ReleaseCut(sc);     // wykres wraca do pelnych danych
         In_Apply.SetYesNo(0);
         In_Restore.SetYesNo(0);
-        LogMsg(sc, "Restore: oryginal przywrocony, bar zwolniony, zakres dat przywrocony.");
         return;
     }
 
@@ -750,11 +592,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         DoLoad = true;      // po zmianie 'Bar od konca' zaczytaj nowy bar
 
     if (AutoInit)
-    {
         DoLoad = true;      // start studium: zaczytaj bar wskazany przez 'Bar od konca'
-        if (In_Diag.GetYesNo())
-            LogMsg(sc, "Start: automatyczne zaczytanie bara.");
-    }
 
     // Po zdjeciu obciecia czekalismy na pelne dane: teraz zaczytaj bar
     if (NeedResolve && CutEnd == 0 && sc.ArraySize >= FullSize)
@@ -773,13 +611,11 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
             ReleaseCut(sc);
             NeedResolve = 1;
             In_Load.SetYesNo(0);
-            LogMsg(sc, "Bar poza obcietym zakresem: zdejmuje obciecie, zaczytam bar po przeladowaniu.");
             return;
         }
 
         if (Idx < 0 || Idx >= sc.ArraySize)
         {
-            LogMsg(sc, "Load: brak bara o podanym przesunieciu.");
             In_Load.SetYesNo(0);
             NeedResolve = 0;
             return;
@@ -806,16 +642,6 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
         In_Close.SetFloat(sc.BaseData[SC_LAST][Idx]);
         In_Load.SetYesNo(0);
 
-        if (In_Diag.GetYesNo())
-        {
-            SCString Msg;
-            Msg.Format("D1BarReplay: Load bar idx=%d data=%s O=%.2f H=%.2f L=%.2f C=%.2f",
-                Idx, NewDate.GetChars(),
-                sc.BaseData[SC_OPEN][Idx], sc.BaseData[SC_HIGH][Idx],
-                sc.BaseData[SC_LOW][Idx],  sc.BaseData[SC_LAST][Idx]);
-            sc.AddMessageToLog(Msg, 0);
-        }
-
         // --- OBCIECIE DANYCH DO DNIA BARA (brak lookahead) ---
         if (In_Cut.GetYesNo())
         {
@@ -826,14 +652,6 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
             {
                 RequestCut(sc, EndDate);
                 CutJustRequested = true;
-
-                if (In_Diag.GetYesNo())
-                {
-                    SCString Msg;
-                    Msg.Format("D1BarReplay[E5]: obciecie zakresu dat do %s (EndDate=%d), ArraySize=%d FullSize=%d",
-                        NewDate.GetChars(), EndDate, sc.ArraySize, FullSize);
-                    sc.AddMessageToLog(Msg, 0);
-                }
             }
         }
     }
@@ -844,11 +662,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
     if (In_Apply.GetYesNo() && HasTarget && !CutJustRequested)
     {
         int Idx = FindTargetIndex(sc, TargetIdx, TargetDT);
-        if (Idx < 0)
-        {
-            LogMsg(sc, "Apply: nie znaleziono bara docelowego (zmiana danych?).");
-        }
-        else
+        if (Idx >= 0)       // bar docelowy zniknal (zmiana danych): nic nie nakladamy
         {
             TargetIdx = Idx;
 
@@ -861,19 +675,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                 // trwa lub jest wstrzymany. Gdy zatrzymany: bar zostaje oryginalny (settlement).
                 ValuesReady = false;
 
-                int Status = (int)sc.GetReplayStatusFromChart(FollowChart);
-                int& LastStatus = sc.GetPersistentInt(35);
-                if (Status != LastStatus)
-                {
-                    LastStatus = Status;
-                    if (In_Diag.GetYesNo())
-                    {
-                        SCString Msg;
-                        Msg.Format("D1BarReplay[E3]: status replay sendera ch%d = %d (0=stop, 1=gra, 2=pauza)%s",
-                            FollowChart, Status, Status == 0 ? " - wartosci sendera nie sa nakladane" : "");
-                        sc.AddMessageToLog(Msg, 0);
-                    }
-                }
+                int Status = (int)sc.GetReplayStatusFromChart(FollowChart);     // 0 = stop, 1 = gra, 2 = pauza
 
                 if (Status != 0)
                 {
@@ -911,28 +713,11 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
 
             // Walidacja: High >= Open, Close, Low  |  Low <= Open, Close
             bool Valid = (H >= O && H >= C && H >= L && L <= O && L <= C);
-            if (!ValuesReady)
-            {
-                // Brak wartosci do nalozenia (replay zatrzymany / inny dzien): bar zostaje oryginalny
-            }
-            else if (!Valid)
-            {
-                // UpdateAlways wola studium ciagle: komunikat tylko przy zmianie wartosci
-                float& RejH = sc.GetPersistentFloat(26);
-                float& RejL = sc.GetPersistentFloat(27);
-                float& RejC = sc.GetPersistentFloat(28);
-                if (H != RejH || L != RejL || C != RejC)
-                {
-                    RejH = H; RejL = L; RejC = C;
-                    SCString Msg;
-                    Msg.Format("D1BarReplay: ODRZUCONO H=%.2f L=%.2f C=%.2f (Open=%.2f) - niespojne wartosci. Bar zostaje oryginalny.", H, L, C, O);
-                    sc.AddMessageToLog(Msg, 1);
-                }
-            }
-            else
-            {
-                sc.GetPersistentFloat(26) = 0.0f;   // kolejne odrzucenie ma sie znowu zalogowac
 
+            // Brak wartosci do nalozenia (replay zatrzymany / inny dzien) albo wartosci niespojne
+            // z Open: bar zostaje oryginalny.
+            if (ValuesReady && Valid)
+            {
                 // Bar jest czysty (po Revert) - zapamietaj oryginal i zapisz nowe wartosci
                 OrigH = sc.BaseData[SC_HIGH][Idx];
                 OrigL = sc.BaseData[SC_LOW][Idx];
@@ -945,12 +730,12 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                 AppC = C;
                 Applied = 1;
 
-                // UpdateAlways = 1 wola studium ciagle, wiec loguj tylko przy zmianie wartosci
-                float& LogH = sc.GetPersistentFloat(23);
-                float& LogL = sc.GetPersistentFloat(24);
-                float& LogC = sc.GetPersistentFloat(25);
-                bool Changed = (H != LogH || L != LogL || C != LogC);
-                LogH = H; LogL = L; LogC = C;
+                // UpdateAlways = 1 wola studium ciagle, wiec reagujemy tylko na zmiane wartosci
+                float& LastH = sc.GetPersistentFloat(23);
+                float& LastL = sc.GetPersistentFloat(24);
+                float& LastC = sc.GetPersistentFloat(25);
+                bool Changed = (H != LastH || L != LastL || C != LastC);
+                LastH = H; LastL = L; LastC = C;
 
                 // Przy zasilaniu z sendera inne studia na receiverze nie przeliczaja sie same
                 // (wywolanie z UpdateAlways), wiec po zmianie wartosci wymuszamy przeliczenie wykresu.
@@ -963,64 +748,7 @@ SCSFExport scsf_D1BarReplay(SCStudyInterfaceRef sc)
                     In_Low.SetFloat(L);
                     In_Close.SetFloat(C);
                 }
-
-                if (In_Diag.GetYesNo() && Changed)
-                {
-                    SCString Msg;
-                    Msg.Format("D1BarReplay[E1]: APPLY idx=%d  orig H=%.2f L=%.2f C=%.2f -> nowe H=%.2f L=%.2f C=%.2f | odczyt z danych: H=%.2f L=%.2f C=%.2f",
-                        Idx, OrigH, OrigL, OrigC, H, L, C,
-                        sc.BaseData[SC_HIGH][Idx], sc.BaseData[SC_LOW][Idx], sc.BaseData[SC_LAST][Idx]);
-                    sc.AddMessageToLog(Msg, 0);
-                }
             }
-        }
-    }
-
-    // --- E2: ODCZYT WYKRESU ZRODLOWEGO (TYLKO DIAGNOSTYKA, BEZ ZAPISU) ----------
-    int SrcChart = In_SourceChart.GetChartNumber();
-    if (SrcChart == sc.ChartNumber)
-        SrcChart = 0;       // wlasny wykres = zrodlo wylaczone
-    if (SrcChart > 0 && In_Diag.GetYesNo())
-    {
-        SCGraphData SrcData;
-        sc.GetChartBaseData(SrcChart, SrcData);
-
-        SCDateTimeArray SrcTimes;
-        sc.GetChartDateTimeArray(SrcChart, SrcTimes);
-
-        int SrcSize = SrcTimes.GetArraySize();
-        if (SrcSize == 0 || SrcData[SC_LAST].GetArraySize() == 0)
-            return;     // dane zrodla jeszcze sie laduja
-
-        int Last = SrcSize - 1;
-        float SO = SrcData[SC_OPEN][Last];
-        float SH = SrcData[SC_HIGH][Last];
-        float SL = SrcData[SC_LOW][Last];
-        float SClose = SrcData[SC_LAST][Last];
-
-        float& LastO = sc.GetPersistentFloat(10);
-        float& LastH = sc.GetPersistentFloat(11);
-        float& LastL = sc.GetPersistentFloat(12);
-        float& LastC = sc.GetPersistentFloat(13);
-        int&   LastN = sc.GetPersistentInt(10);
-
-        // Loguj tylko przy zmianie (replay generuje duzo wywolan)
-        if (SO != LastO || SH != LastH || SL != LastL || SClose != LastC || SrcSize != LastN)
-        {
-            LastO = SO; LastH = SH; LastL = SL; LastC = SClose; LastN = SrcSize;
-
-            int SrcDay = sc.GetTradingDayDateForChartNumber(SrcChart, SrcTimes[Last]);
-
-            // Szukamy bara receivera o tej dacie (tylko do porownania w logu)
-            int RecvIdx = -1;
-            for (int i = sc.ArraySize - 1; i >= 0; i--)
-                if (sc.BaseDateTimeIn[i].GetDate() == SrcDay) { RecvIdx = i; break; }
-
-            SCString Msg;
-            Msg.Format("D1BarReplay[E2]: zrodlo ch%d replay=%d bars=%d start=%s tradingDay=%d O=%.2f H=%.2f L=%.2f C=%.2f | receiver idx=%d",
-                SrcChart, (int)sc.GetReplayStatusFromChart(SrcChart), SrcSize,
-                sc.FormatDateTime(SrcTimes[Last]).GetChars(), SrcDay, SO, SH, SL, SClose, RecvIdx);
-            sc.AddMessageToLog(Msg, 0);
         }
     }
 }
