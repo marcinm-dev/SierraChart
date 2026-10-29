@@ -25,7 +25,7 @@ if (sc.SetDefaults)
 		return;
 	}
 	
-	// --- ZMIENNE PAMIĘCIOWE (PERSISTENT) ---
+	// --- PERSISTENT VARIABLES ---
 	float& r_LastPrice = sc.GetPersistentFloat(1);
 	int& r_LastMin = sc.GetPersistentInt(1);
 	int& r_LineNumber = sc.GetPersistentInt(2);
@@ -34,30 +34,30 @@ if (sc.SetDefaults)
 
 	if (r_LineNumber == 0) r_LineNumber = 2026;
 
-	// --- 1. OPTYMALIZACJA: THROTTLING (200ms) ---
+	// --- 1. OPTIMISATION: THROTTLING (200ms) ---
 	double CurrentTime = sc.GetCurrentDateTime().GetAsDouble();
 	
-	// *** ZMIANA: Dodano !sc.IsFullRecalculation, aby wymusić rysowanie przy starcie/zmianie interwału ***
+	// *** CHANGE: Added !sc.IsFullRecalculation to force drawing on start / interval change ***
 	if ((CurrentTime - r_LastUpdate) < (0.2 / 86400.0) && r_LastUpdate != 0 && !sc.IsFullRecalculation)
 		return;
 
 	int LastIdx = sc.ArraySize - 1;
 	if (LastIdx < 0) return;
 
-	// --- DANE WEJŚCIOWE ---
+	// --- INPUT DATA ---
 	SCDateTime dt = sc.LatestDateTimeForLastBar;
 	float currentPrice = sc.Close[LastIdx];
 	int currentMin = dt.GetMinute();
 
-	// Sprawdzamy czy cokolwiek się zmieniło od ostatniego rysowania
+	// Check whether anything changed since the last draw
 	bool priceChanged = (currentPrice != r_LastPrice);
 	bool minuteChanged = (currentMin != r_LastMin);
 
-	// *** ZMIANA: Dodano !sc.IsFullRecalculation do bramki logicznej ***
+	// *** CHANGE: Added !sc.IsFullRecalculation to the change-detection gate ***
 	if (!priceChanged && !minuteChanged && !r_CachedTimePart.IsEmpty() && !sc.IsFullRecalculation)
 		return;
 
-// --- 2. OPTYMALIZACJA: BUFOROWANIE CZASU ---
+// --- 2. OPTIMISATION: TIME CACHING ---
 	if (minuteChanged || r_CachedTimePart.IsEmpty() || sc.IsFullRecalculation)
 	{
 		r_CachedTimePart.Format("%02d/%02d/%04d %02d:%02d", 
@@ -69,11 +69,11 @@ if (sc.SetDefaults)
 	r_LastPrice = currentPrice;
 	r_LastUpdate = CurrentTime;
 
-	// --- 3. SKŁADANIE FINALNEGO TEKSTU ---
+	// --- 3. BUILDING THE FINAL TEXT ---
 	SCString FinalText;
 	FinalText.Format("%s = %.2f", r_CachedTimePart.GetChars(), currentPrice);
 
-	// --- 4. RYSOWANIE (POZYCJONOWANIE RELATYWNE 1-100) ---
+	// --- 4. DRAWING (RELATIVE POSITIONING 1-100) ---
 	s_UseTool Tool;
 	Tool.Clear();
 	Tool.DrawingType = DRAWING_TEXT;
