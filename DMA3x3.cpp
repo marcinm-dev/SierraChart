@@ -39,17 +39,23 @@ SCSFExport scsf_DiNapoliDMA3x3(SCStudyInterfaceRef sc)
     }
 
     // --- ARCHITEKTURA MASTER STATE (BEZ ZMIAN) ---
-    int Btn = sc.Input[0].GetInt();
-    int Length = sc.Input[1].GetInt();
     int& MasterState = sc.GetPersistentInt(10);
-    int& LastHideStudy = sc.GetPersistentInt(12);
     int& Initialized = sc.GetPersistentInt(11);
+    int& LastHideStudy = sc.GetPersistentInt(12);
+    int& UIState = sc.GetPersistentInt(13); // 0 = przycisk jeszcze nie ustawiony, 1 = ukryty, 2 = widoczny
 
     if (Initialized == 0) {
         MasterState = !sc.HideStudy;
         LastHideStudy = sc.HideStudy;
         Initialized = 1;
     }
+
+    // --- TRYB UKRYTY: poza barem zdarzen (UpdateStartIndex) i ostatnim barem nie robimy nic ---
+    if (MasterState == 0 && sc.Index != sc.UpdateStartIndex && sc.Index != sc.ArraySize - 1)
+        return;
+
+    int Btn = sc.Input[0].GetInt();
+    int Length = sc.Input[1].GetInt();
 
     if (sc.Index == sc.UpdateStartIndex)
     {
@@ -77,16 +83,23 @@ SCSFExport scsf_DiNapoliDMA3x3(SCStudyInterfaceRef sc)
         sc.HideStudy = !MasterState;
         LastHideStudy = sc.HideStudy;
 
-        sc.SetCustomStudyControlBarButtonEnable(Btn, MasterState);
-        sc.SetCustomStudyControlBarButtonText(Btn, "DMA 3x3");
+        // Wywolania przycisku tylko gdy stan sie zmienil albo po pelnym przeliczeniu
+        // (ladowanie wykresu, zmiana interwalu). Zatrzask HideStudy/DrawStyle zostaje
+        // przy kazdym ticku - to tanie przypisania, a chronia przed odswiezaniem z F6.
+        if (UIState != MasterState + 1 || sc.IsFullRecalculation)
+        {
+            sc.SetCustomStudyControlBarButtonEnable(Btn, MasterState);
+            sc.SetCustomStudyControlBarButtonText(Btn, "DMA 3x3");
+            UIState = MasterState + 1;
+        }
 
         DMA.DrawStyle = (MasterState == 1) ? DRAWSTYLE_LINE : DRAWSTYLE_IGNORE;
     }
 
     // --- MATEMATYKA: SMA(Close, Length) zaokraglona do ticka, przesuniecie robi Sierra (GraphicalDisplacement) ---
-    // SMA nie jest rekurencyjna, wiec przy ukryciu mozna pominac cala jej kalkulacje;
+    // SMA nie jest rekurencyjna, wiec przy ukryciu pomijamy cala kalkulacje (rowniez ostatni bar);
     // po wlaczeniu FlagFullRecalculate odtwarza historie.
-    if (MasterState == 1 || sc.Index == sc.ArraySize - 1)
+    if (MasterState == 1)
     {
         if (sc.Index >= Length - 1)
         {
