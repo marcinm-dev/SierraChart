@@ -63,4 +63,4 @@ All other inputs have no name, so Sierra Chart hides them. They still exist (ind
 
 ## Diagnostics
 
-Most diagnostic log lines were removed from the production version (list in `LOGI_usuniete.md`, version with logs = commit `1e4baa2`). On W/M/Q/Y charts one `[HTF]` line is written to the Message Log whenever the sender's day, the replay status or the study state changes (not on every tick): period type, day, status, data source (Daily / sender), number of days taken from the Daily chart and the first one, Opens, the sender's day, the aggregate H/L/C and the bar's own H/L/C from the file.
+Most diagnostic log lines were removed from the production version (list in `LOGI_usuniete.md`, version with logs = commit `7033ef6`). On W/M/Q/Y charts one `[HTF]` line is written to the Message Log whenever the sender's day, the replay status or the study state changes (not on every tick): period type, day, status, data source (Daily / sender), number of days taken from the Daily chart and the first one, Opens, the sender's day, the aggregate H/L/C and the bar's own H/L/C from the file.

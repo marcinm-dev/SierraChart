@@ -1,6 +1,7 @@
-# Repository holds only the study source and the README. Everything else stays local.
+# Repository holds only the study sources and their READMEs. Everything else stays local.
 *
 !.gitignore
-!README.md
+!D1BarReplay_README.md
 !D1BarReplay.cpp
 !DMA3x3.cpp
+!DMA3x3_README.md
