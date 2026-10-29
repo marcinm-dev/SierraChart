@@ -28,7 +28,7 @@ SCSFExport scsf_DiNapoliDMA3x3(SCStudyInterfaceRef sc)
         DMA.DrawStyle = DRAWSTYLE_LINE;
         DMA.PrimaryColor = RGB(0, 0, 128);
         DMA.LineWidth = 1;
-        DMA.GraphicalDisplacement = 3; // przesuniecie do przodu o 3 bary (mozna zmienic w Subgraph Settings)
+        DMA.GraphicalDisplacement = 3; // shift forward by 3 bars (can be changed in Subgraph Settings)
         DMA.DisplayNameValueInDataLine = 0;
         DMA.DisplayNameValueInWindowsFlags = 1;
         DMA.IncludeInSpreadsheet = 0; // Spreadsheet Guard
@@ -38,11 +38,11 @@ SCSFExport scsf_DiNapoliDMA3x3(SCStudyInterfaceRef sc)
         return;
     }
 
-    // --- ARCHITEKTURA MASTER STATE (BEZ ZMIAN) ---
+    // --- MASTER STATE ARCHITECTURE ---
     int& MasterState = sc.GetPersistentInt(10);
     int& Initialized = sc.GetPersistentInt(11);
     int& LastHideStudy = sc.GetPersistentInt(12);
-    int& UIState = sc.GetPersistentInt(13); // 0 = przycisk jeszcze nie ustawiony, 1 = ukryty, 2 = widoczny
+    int& UIState = sc.GetPersistentInt(13); // 0 = button not set yet, 1 = hidden, 2 = visible
 
     if (Initialized == 0) {
         MasterState = !sc.HideStudy;
@@ -50,7 +50,7 @@ SCSFExport scsf_DiNapoliDMA3x3(SCStudyInterfaceRef sc)
         Initialized = 1;
     }
 
-    // --- TRYB UKRYTY: poza barem zdarzen (UpdateStartIndex) i ostatnim barem nie robimy nic ---
+    // --- HIDDEN MODE: do nothing except on the event bar (UpdateStartIndex) and the last bar ---
     if (MasterState == 0 && sc.Index != sc.UpdateStartIndex && sc.Index != sc.ArraySize - 1)
         return;
 
@@ -59,17 +59,17 @@ SCSFExport scsf_DiNapoliDMA3x3(SCStudyInterfaceRef sc)
 
     if (sc.Index == sc.UpdateStartIndex)
     {
-        // 1. Zmiana z przycisku (Click)
+        // 1. Change from the button (click)
         if (sc.MenuEventID == Btn)
         {
             MasterState = !MasterState;
 
-            // sc.MenuEventID celowo NIE jest zerowane - inne wskazniki
-            // moga sprawdzac swoje przyciski.
+            // sc.MenuEventID is intentionally NOT reset - other studies
+            // may check their own buttons.
 
             if (MasterState == 1) sc.FlagFullRecalculate = 1;
         }
-        // 2. Zmiana flagi systemowej w F6
+        // 2. Change of the system flag (Hide Study in the study settings)
         else if (sc.HideStudy != LastHideStudy)
         {
             MasterState = !sc.HideStudy;
@@ -77,15 +77,16 @@ SCSFExport scsf_DiNapoliDMA3x3(SCStudyInterfaceRef sc)
         }
     }
 
-    // --- FINALNY ZATRZASK I AKTUALIZACJA UI (raz na cykl) ---
+    // --- FINAL LATCH AND UI UPDATE (once per cycle) ---
     if (sc.Index == sc.ArraySize - 1)
     {
         sc.HideStudy = !MasterState;
         LastHideStudy = sc.HideStudy;
 
-        // Wywolania przycisku tylko gdy stan sie zmienil albo po pelnym przeliczeniu
-        // (ladowanie wykresu, zmiana interwalu). Zatrzask HideStudy/DrawStyle zostaje
-        // przy kazdym ticku - to tanie przypisania, a chronia przed odswiezaniem z F6.
+        // Button calls only when the state changed or after a full recalculation
+        // (chart load, timeframe change). The HideStudy/DrawStyle latch stays on
+        // every tick - these are cheap assignments that protect against the
+        // background refresh from the study settings.
         if (UIState != MasterState + 1 || sc.IsFullRecalculation)
         {
             sc.SetCustomStudyControlBarButtonEnable(Btn, MasterState);
@@ -96,17 +97,17 @@ SCSFExport scsf_DiNapoliDMA3x3(SCStudyInterfaceRef sc)
         DMA.DrawStyle = (MasterState == 1) ? DRAWSTYLE_LINE : DRAWSTYLE_IGNORE;
     }
 
-    // --- MATEMATYKA: SMA(Close, Length) zaokraglona do ticka, przesuniecie robi Sierra (GraphicalDisplacement) ---
-    // SMA nie jest rekurencyjna, wiec przy ukryciu pomijamy cala kalkulacje (rowniez ostatni bar);
-    // po wlaczeniu FlagFullRecalculate odtwarza historie.
+    // --- MATH: SMA(Close, Length) rounded to tick size, the shift is done by Sierra (GraphicalDisplacement) ---
+    // SMA is not recursive, so while hidden the whole calculation is skipped (including the last bar);
+    // FlagFullRecalculate rebuilds the history when the study is shown again.
     if (MasterState == 1)
     {
         if (sc.Index >= Length - 1)
         {
             sc.SimpleMovAvg(sc.Close, DMA, Length);
 
-            // Zaokraglenie wyniku (juz po obliczeniach) do ticka - sc.RoundToTickSize
-            // uzywa sc.TickSize biezacego symbolu, wiec dopasowuje sie do kazdego instrumentu.
+            // Round the finished result to the tick - sc.RoundToTickSize uses
+            // the current symbol's sc.TickSize, so it adapts to every instrument.
             DMA[sc.Index] = sc.RoundToTickSize(DMA[sc.Index]);
         }
     }
