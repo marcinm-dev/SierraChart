@@ -17,6 +17,7 @@ The text is meant to act as a watermark on screenshots, so a trade journal entry
 
 - **Single line, fixed screen position.** The text does not move when you scroll the chart or when the price scale changes. It is placed with window-relative coordinates, not with chart time and price.
 - **Market clock in the chart's time zone.** On charts built from intraday data the time is the time of the last tick (`sc.LatestDateTimeForLastBar`), so the minute advances inside a single bar and it also works in Bar Replay. Charts built from historical daily data (Daily, Weekly, Monthly, Quarterly) have no time of day: `sc.LatestDateTimeForLastBar` is the date of the last session at 00:00. When that session is today, the current time (replay time while replaying) is used. When it is earlier (weekend, holiday, a "Date Range To" in the past, the cut that D1BarReplay makes during a Bar Replay), the header shows the date of the last session with `00:00`. Both are shown in the time zone of the chart.
+- **Clock of the D1BarReplay master (optional).** A Daily or higher chart that is not replaying itself (the receiver of D1BarReplay) can take the date and time of the master chart (the chart with the Bar Replay) while that replay plays or is paused. It needs ChartInfo on the master too: the study on a chart built from intraday data keeps its clock in a persistent `SCDateTime` and the receiver reads it with `GetPersistentSCDateTimeFromChartStudy`. Without ChartInfo on the master, or when the replay is stopped, the receiver uses the rule above. The option works only on charts built from historical daily data; on intraday charts it is ignored.
 - **Range of the visible bars.** Calculated from `sc.IndexOfFirstVisibleBar` and `sc.IndexOfLastVisibleBar` and rounded with `sc.RoundToTickSize`, so it is always a multiple of the symbol's tick (for example `267.50` or `267.25` on ES). It follows scrolling, zooming and interval changes.
 - **Bar count warning.** The bar count is colored when the number of visible bars is not equal to the threshold (fewer or more).
 - **Cheap to run.** Built for 40+ charts open at the same time (see "Performance design").
@@ -37,6 +38,8 @@ The text is meant to act as a watermark on screenshots, so a trade journal entry
 | 8 | Color Bar Count When Not Equal To Threshold | Yes | Turns the coloring of the bar count on and off. |
 | 9 | Bar Count Threshold | 105 | The bar count is colored when the number of visible bars is different from this value. |
 | 10 | Bar Count Color | red (255, 0, 0) | |
+| 11 | Take Time From Master Chart During Its Bar Replay | No | Only for charts built from historical daily data. When on, and the Bar Replay of the master chart plays or is paused, the header shows the date and time of the master. |
+| 12 | Master Chart | none | The chart with the Bar Replay (the sender of D1BarReplay). It needs ChartInfo on it. |
 
 Input indexes must not be renumbered: saved chartbooks depend on them. Reserved indexes are left unnamed and `sc.ProcessStudyUnsetInputs = 1` makes Sierra read the inputs after the gap.
 
@@ -101,7 +104,7 @@ Versions are git tags: `chartinfo-v1`, `chartinfo-v2`, `chartinfo-v3`, `chartinf
 - **V2**: second line with the range of the visible bars (`R=<points> (<bars>B)`, rounded to the tick), `UpdateAlways`, cleanup of the drawings on removal and development logging (input `Log Level`).
 - **V3**: single line `MM/DD/YYYY HH:MM R=<points> (<bars>B)`: the price is removed and the range moved into the first line; the bar count is a separate drawing that turns red above a threshold (inputs 8-10); the second-line offset input (6) is retired.
 - **V4**: the bar count is colored when it differs from the threshold (fewer or more), not only above it; the clock works on Daily and higher charts; cheaper updates (cached range with O(1) updates for the last bar, cache of the drawn text); development logging and its input (7) removed; default horizontal position 146.
-- **V5**: Daily and higher charts show the date of the last session with `00:00` when that session is before today (weekend, holiday, "Date Range To" in the past, the cut D1BarReplay makes in a Bar Replay), and the current date and time otherwise. V4 showed the current date and time always, which was wrong on a weekend and on a chart cut to the past.
+- **V5**: Daily and higher charts show the date of the last session with `00:00` when that session is before today (weekend, holiday, "Date Range To" in the past, the cut D1BarReplay makes in a Bar Replay), and the current date and time otherwise. V4 showed the current date and time always, which was wrong on a weekend and on a chart cut to the past. New inputs 11-12: a Daily or higher chart can take the date and time of the D1BarReplay master chart while its Bar Replay runs (ChartInfo is needed on the master).
 
 ## Files
 

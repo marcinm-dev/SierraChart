@@ -4,7 +4,11 @@ SCDLLName("ChartInfo")
 
 // ChartInfo V5: one header line with date, time and the range (highest high - lowest low) of the visible bars.
 // A daily-data chart whose last session is before today (weekend, holiday, a date range, D1BarReplay) shows that
-// session's date with 00:00 instead of the current time.
+// session's date with 00:00 instead of the current time. Optionally (inputs 11-12) such a chart takes the clock of
+// the D1BarReplay master chart while its Bar Replay runs. The ChartInfo on the master (a chart built from intraday
+// data) keeps its clock in a persistent SCDateTime, which the receiver reads with GetPersistentSCDateTimeFromChartStudy.
+// No subgraphs are used: any subgraph value of a study in the main price region enters the price scale (V5-dev.2
+// flattened the price chart that way).
 // The development logging was removed in this build; the logged version and the list of the removed logs are
 // described in PROJECT_CONTEXT_FOR_AI.md. Keep only one DLL exporting scsf_ChartInfo in the Data folder.
 
@@ -21,6 +25,8 @@ SCSFExport scsf_ChartInfo(SCStudyInterfaceRef sc)
 	SCInputRef InPaintBars = sc.Input[8];
 	SCInputRef InBarsThreshold = sc.Input[9];
 	SCInputRef InBarsColor = sc.Input[10];
+	SCInputRef InSyncMaster = sc.Input[11];
+	SCInputRef InMasterChart = sc.Input[12];
 
 	if (sc.SetDefaults)
 	{
@@ -44,6 +50,8 @@ SCSFExport scsf_ChartInfo(SCStudyInterfaceRef sc)
 		InBarsThreshold.Name = "Bar Count Threshold"; InBarsThreshold.SetInt(105);
 		InBarsThreshold.SetIntLimits(1, 100000);
 		InBarsColor.Name = "Bar Count Color"; InBarsColor.SetColor(RGB(255, 0, 0));
+		InSyncMaster.Name = "Take Time From Master Chart During Its Bar Replay (Daily and higher charts)"; InSyncMaster.SetYesNo(0);
+		InMasterChart.Name = "Master Chart (chart with the Bar Replay, needs ChartInfo too)"; InMasterChart.SetChartNumber(0);
 
 		// One line when the study is added or loaded, to confirm which build Sierra runs (see the ghost DLL lesson).
 		sc.AddMessageToLog("ChartInfo V5 loaded", 0);
@@ -67,6 +75,7 @@ SCSFExport scsf_ChartInfo(SCStudyInterfaceRef sc)
 	SCString& r_CachedTimePart = sc.GetPersistentSCString(1);
 	SCString& r_DrawnMain = sc.GetPersistentSCString(2);   // text of the main drawing as last sent to the chart
 	SCString& r_DrawnBars = sc.GetPersistentSCString(3);   // text of the bar count drawing as last sent to the chart
+	SCDateTime& r_PublishedClock = sc.GetPersistentSCDateTime(1);  // clock of a chart built from intraday data, read by receivers
 
 	if (r_LineNumber == 0) r_LineNumber = 2026;
 	const int BarsLineNumber = r_LineNumber + 1;
@@ -100,18 +109,47 @@ SCSFExport scsf_ChartInfo(SCStudyInterfaceRef sc)
 	// verified in the Message Log of 2026-11-01). When that date is before today, the market is not trading on
 	// this chart's last day: a weekend, a holiday, a "Date Range To" in the past, or the cut D1BarReplay makes
 	// during a Bar Replay. Then the header shows that session's date with 00:00 instead of the current time.
+	// While the Bar Replay of the master chart (the sender of D1BarReplay) plays or is paused and the sync input is
+	// on, the clock of the master is used instead: this chart is not replaying itself, so its own current time is the
+	// system time. A receiver without a ChartInfo on the master, or without data from it, falls back to the rule above.
 	bool FixedDate = false;
 	if (sc.ChartDataType == DAILY_DATA && dt.GetHour() == 0 && dt.GetMinute() == 0)
 	{
-		const SCDateTime Now = sc.GetCurrentDateTime();
-		if (dt.GetDate() >= Now.GetDate())
-			dt = Now;
-		else
-			FixedDate = true;
+		bool Synced = false;
+		const int MasterNo = InMasterChart.GetChartNumber();
+		if (InSyncMaster.GetYesNo() != 0 && MasterNo > 0 && MasterNo != sc.ChartNumber
+			&& sc.GetReplayStatusFromChart(MasterNo) != 0)
+		{
+			// The ChartInfo on the master keeps its clock in persistent SCDateTime 1 (0 until the master published it).
+			const int MasterStudyID = sc.GetStudyIDByName(MasterNo, "ChartInfo", 0);
+			if (MasterStudyID > 0)
+			{
+				const SCDateTime MasterClock = sc.GetPersistentSCDateTimeFromChartStudy(MasterNo, MasterStudyID, 1);
+				if (MasterClock.GetDate() > 0)
+				{
+					dt = MasterClock;
+					Synced = true;
+				}
+			}
+		}
+
+		if (!Synced)
+		{
+			const SCDateTime Now = sc.GetCurrentDateTime();
+			if (dt.GetDate() >= Now.GetDate())
+				dt = Now;
+			else
+				FixedDate = true;
+		}
 	}
 	// Key of the cached date/time text: the minute, or the date for a fixed date (the two cannot collide, a date
 	// number is far above 59), so a change of mode or of the date also rebuilds the text.
 	const int TimeKey = FixedDate ? dt.GetDate() : dt.GetMinute();
+
+	// Publish the clock for the receivers, only from charts built from intraday data (a possible master); a chart
+	// built from daily data is a receiver and publishes nothing.
+	if (sc.ChartDataType != DAILY_DATA)
+		r_PublishedClock = dt;
 
 	// Visible bars: sc.IndexOfFirstVisibleBar / sc.IndexOfLastVisibleBar index the base data arrays.
 	// Both are 0 right after the chart loads and Last can point into the fill space after the last bar.
