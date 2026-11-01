@@ -4,7 +4,7 @@ A Sierra Chart ACSIL study that lets daily and higher-timeframe historical chart
 
 Sierra Chart's Bar Replay does not work on daily historical charts (data from `.dly` files). This study works around it by overwriting the High, Low and Close of one bar **in the chart's memory only**. Data files are never written.
 
-> **Status: production version for occasional use (screening trades).** Verified by the author on `ESZ26-CME`: D1, Weekly, Monthly and Quarterly receivers, pause/play/stop of the replay, day and week/month rollover, restart of Sierra Chart with the chartbook saved while the chart was cut. See "Known limitations" for what is untested.
+> **Status: closed, V1 (production version for occasional use, screening trades).** Verified by the author on `ESZ26-CME`: D1, Weekly, Monthly and Quarterly receivers, pause/play/stop of the replay, day and week/month rollover, restart of Sierra Chart with the chartbook saved while the chart was cut. See "Known limitations" for what is untested.
 
 ## How it works
 
@@ -29,7 +29,8 @@ Each chart keeps its own copy of the data in RAM, so a modification on one chart
 
 - Sierra Chart (developed on version 2908, 64-bit) with ACSIL custom study builds enabled.
 - A sender chart and a receiver chart for the same symbol **in the same chartbook**.
-- The sender (D1 intraday only) and the receivers (D1 historical, W/M/Q/Y) should be **continuous `[C]`** charts of the same symbol and series, so that the master and the file data come from the same contract. Before a contract roll a `[C]` sender in replay may deliver a single contract (e.g. ESZ26) while a `[C]` file chart still uses the older one (ESU26); the study then shows a red "Open price" error and overwrites nothing. After the roll `[C]` works. Leave "Date Range To (YYYY-MM-DD)" **empty** on these charts: the study sets and releases the end date itself, and an end date typed by hand is treated as a leftover and cleared.
+- Data range: load the sender (D1 intraday only) **from 2020-01-01, not earlier** (a longer intraday history makes the chart noticeably sluggish; Bar Replay can only be started on a day the sender holds) and the Daily chart (daily historical, selected in the *Daily chart* input) **from 1980-01-01**. The Daily chart must reach back to the start of the period (for a yearly chart: January 1 of the replayed year), otherwise the study shows a red text "Daily chart nie siega poczatku okresu (wczytaj dane od 1980)" and overwrites nothing (new text, untested in Sierra). The sender supplies only the replayed day, so a short sender history does not affect the period aggregate.
+- The sender (D1 intraday only) and the receivers (D1 historical, W/M/Q/Y) should be **continuous `[C]`** charts of the same symbol and series, so that the master and the file data come from the same contract. Before a contract roll a `[C]` sender in replay may deliver a single contract (e.g. ESZ26) while a `[C]` file chart still uses the older one (ESU26); the study then shows a red "Open price" error and overwrites nothing. After the roll `[C]` works. "Date Range To (YYYY-MM-DD)" must be **empty on every chart that is not the sender**: on all receivers (D1 historical, W/M/Q/Y) the study sets and releases the end date itself and an end date typed by hand is treated as a leftover and cleared; on the Daily chart nothing clears it, and an end date earlier than the replayed day gives the red "brak danych z wykresu Daily" text.
 
 ## Build and set up
 
@@ -56,7 +57,7 @@ All other inputs have no name, so Sierra Chart hides them. They still exist (ind
 - Contract series check on D1 charts: the sender's Open of the replayed day must be identical to the receiver bar's Open. On continuous (`[C]`) charts before the contract roll the older contract's prices differ from the sender's by tens of points, so the study overwrites nothing, shows a red error text in the center of the chart and the bar keeps its settlement values.
 - A replayed day that has no bar in the `.dly` file (holiday, missing data): during the replay the chart is cut to the last bar before that day, nothing is overwritten and a red text says so.
 - Not tested: yearly charts, continuous (`[C]`) charts on dates before the contract roll, the "day without a bar" handling and the exact Open check on D1.
-- The sender usually holds only a few months of daily history, so quarterly/yearly aggregates may lack data (the study then leaves the bar untouched).
+- Quarterly/yearly aggregates need a Daily chart that reaches the start of the period (see Requirements); the sender's own history length does not matter for them, it only limits how far back a replay can start.
 - The native "last price" label on the price scale comes from symbol data and does not follow the override; hide it in chart settings if it gets in the way of screenshots.
 - Designed for historical data. Live charts overwrite the last bar with incoming ticks.
 - Each day change in the replay reloads the receiver chart (once or twice); a full chartbook with many receivers has not been measured for performance.
@@ -64,3 +65,12 @@ All other inputs have no name, so Sierra Chart hides them. They still exist (ind
 ## Diagnostics
 
 Most diagnostic log lines were removed from the production version (list in `LOGI_usuniete.md`, version with logs = commit `7033ef6`). On W/M/Q/Y charts one `[HTF]` line is written to the Message Log whenever the sender's day, the replay status or the study state changes (not on every tick): period type, day, status, data source (Daily / sender), number of days taken from the Daily chart and the first one, Opens, the sender's day, the aggregate H/L/C and the bar's own H/L/C from the file.
+
+## Versions
+
+Versions are git tags: `v0.1.0-prototype`, `v0.2.0`, `v0.3.0`, `d1barreplay-v1`.
+
+- **v0.1.0-prototype**: manual override engine on a D1 historical chart.
+- **v0.2.0**: weekly/monthly/quarterly receivers follow the sender's day and recalculate indicators on every change of state.
+- **v0.3.0**: automatic follower of the master chart, Daily chart input for W/M/Q/Y, exact Open checks, holiday/missing-day handling, contract-series errors on the chart.
+- **V1**: closed version: v0.3.0 plus an on-chart text when the Daily chart does not reach the start of the period (needed for yearly charts), English code comments, data-range guidelines (sender from 2020-01-01, Daily chart from 1980-01-01, "Date Range To" empty on non-master charts).
