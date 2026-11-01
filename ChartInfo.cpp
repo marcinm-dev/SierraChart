@@ -2,7 +2,9 @@
 
 SCDLLName("ChartInfo")
 
-// ChartInfo V4: one header line with date, time and the range (highest high - lowest low) of the visible bars.
+// ChartInfo V5: one header line with date, time and the range (highest high - lowest low) of the visible bars.
+// A daily-data chart whose last session is before today (weekend, holiday, a date range, D1BarReplay) shows that
+// session's date with 00:00 instead of the current time.
 // The development logging was removed in this build; the logged version and the list of the removed logs are
 // described in PROJECT_CONTEXT_FOR_AI.md. Keep only one DLL exporting scsf_ChartInfo in the Data folder.
 
@@ -44,7 +46,7 @@ SCSFExport scsf_ChartInfo(SCStudyInterfaceRef sc)
 		InBarsColor.Name = "Bar Count Color"; InBarsColor.SetColor(RGB(255, 0, 0));
 
 		// One line when the study is added or loaded, to confirm which build Sierra runs (see the ghost DLL lesson).
-		sc.AddMessageToLog("ChartInfo V4 loaded", 0);
+		sc.AddMessageToLog("ChartInfo V5 loaded", 0);
 		return;
 	}
 
@@ -93,9 +95,23 @@ SCSFExport scsf_ChartInfo(SCStudyInterfaceRef sc)
 	// system time. sc.GetCurrentDateTime() is already in the chart's time zone (verified in the Message Log of
 	// 2026-10-30: 10:13 UTC gave 06:13 on a 240 Min chart; an extra UTC -> chart conversion gave 02:13, so it
 	// must not be applied).
+	// On these charts sc.LatestDateTimeForLastBar holds the date of the last session (the last daily record: the
+	// last Friday on a weekend, the end of a date range the chart is cut to, also on Weekly/Monthly/Quarterly,
+	// verified in the Message Log of 2026-11-01). When that date is before today, the market is not trading on
+	// this chart's last day: a weekend, a holiday, a "Date Range To" in the past, or the cut D1BarReplay makes
+	// during a Bar Replay. Then the header shows that session's date with 00:00 instead of the current time.
+	bool FixedDate = false;
 	if (sc.ChartDataType == DAILY_DATA && dt.GetHour() == 0 && dt.GetMinute() == 0)
-		dt = sc.GetCurrentDateTime();
-	int currentMin = dt.GetMinute();
+	{
+		const SCDateTime Now = sc.GetCurrentDateTime();
+		if (dt.GetDate() >= Now.GetDate())
+			dt = Now;
+		else
+			FixedDate = true;
+	}
+	// Key of the cached date/time text: the minute, or the date for a fixed date (the two cannot collide, a date
+	// number is far above 59), so a change of mode or of the date also rebuilds the text.
+	const int TimeKey = FixedDate ? dt.GetDate() : dt.GetMinute();
 
 	// Visible bars: sc.IndexOfFirstVisibleBar / sc.IndexOfLastVisibleBar index the base data arrays.
 	// Both are 0 right after the chart loads and Last can point into the fill space after the last bar.
@@ -110,7 +126,7 @@ SCSFExport scsf_ChartInfo(SCStudyInterfaceRef sc)
 
 	// --- 2. CHANGE DETECTION ---
 	// The price is no longer shown, so a price tick alone never causes a redraw.
-	bool minuteChanged = (currentMin != r_LastMin);
+	bool minuteChanged = (TimeKey != r_LastMin);
 	bool viewChanged = ShowRange && VisibleReady && (FirstVisible != r_LastFirst || LastVisible != r_LastLast);
 	// While a bar is forming its high only rises and its low only falls, so a change of the last bar matters
 	// only when the last bar is visible, and then only if it goes beyond a cached extreme of the range.
@@ -142,8 +158,8 @@ SCSFExport scsf_ChartInfo(SCStudyInterfaceRef sc)
 	{
 		r_CachedTimePart.Format("%02d/%02d/%04d %02d:%02d",
 			dt.GetMonth(), dt.GetDay(), dt.GetYear(),
-			dt.GetHour(), currentMin);
-		r_LastMin = currentMin;
+			dt.GetHour(), dt.GetMinute());
+		r_LastMin = TimeKey;
 	}
 
 	r_LastUpdate = CurrentTime;

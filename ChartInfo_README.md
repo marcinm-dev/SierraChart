@@ -16,7 +16,7 @@ The text is meant to act as a watermark on screenshots, so a trade journal entry
 ## Features
 
 - **Single line, fixed screen position.** The text does not move when you scroll the chart or when the price scale changes. It is placed with window-relative coordinates, not with chart time and price.
-- **Market clock in the chart's time zone.** On charts built from intraday data the time is the time of the last tick (`sc.LatestDateTimeForLastBar`), so the minute advances inside a single bar and it also works in Bar Replay. Charts built from historical daily data (Daily, Weekly, Monthly, Quarterly) have no time of day in their last bar, so there the current time (replay time while replaying) is used. Both are shown in the time zone of the chart.
+- **Market clock in the chart's time zone.** On charts built from intraday data the time is the time of the last tick (`sc.LatestDateTimeForLastBar`), so the minute advances inside a single bar and it also works in Bar Replay. Charts built from historical daily data (Daily, Weekly, Monthly, Quarterly) have no time of day: `sc.LatestDateTimeForLastBar` is the date of the last session at 00:00. When that session is today, the current time (replay time while replaying) is used. When it is earlier (weekend, holiday, a "Date Range To" in the past, the cut that D1BarReplay makes during a Bar Replay), the header shows the date of the last session with `00:00`. Both are shown in the time zone of the chart.
 - **Range of the visible bars.** Calculated from `sc.IndexOfFirstVisibleBar` and `sc.IndexOfLastVisibleBar` and rounded with `sc.RoundToTickSize`, so it is always a multiple of the symbol's tick (for example `267.50` or `267.25` on ES). It follows scrolling, zooming and interval changes.
 - **Bar count warning.** The bar count is colored when the number of visible bars is not equal to the threshold (fewer or more).
 - **Cheap to run.** Built for 40+ charts open at the same time (see "Performance design").
@@ -44,7 +44,7 @@ Input indexes must not be renumbered: saved chartbooks depend on them. Reserved 
 
 1. Copy `ChartInfo.cpp` to your Sierra Chart `ACS_Source` folder (for example `C:\SierraChart\ACS_Source`).
 2. In Sierra Chart choose **Analysis > Build Custom Studies DLL**, select `ChartInfo.cpp` and build the **64-bit** DLL.
-3. Add the study **ChartInfo** to a chart through **Analysis > Studies > Add Custom Study**. When the study is added or loaded, the Message Log shows `ChartInfo V4 loaded`; use it to confirm which build is running.
+3. Add the study **ChartInfo** to a chart through **Analysis > Studies > Add Custom Study**. When the study is added or loaded, the Message Log shows `ChartInfo V5 loaded`; use it to confirm which build is running.
 4. Set the horizontal position (input 0) so the line sits where you want it.
 
 Keep only one DLL in `Data\` that exports `scsf_ChartInfo`. If two DLLs export the same function name, Sierra Chart may load the old one and your changes will seem to have no effect (the message log still says the DLL was loaded).
@@ -87,7 +87,7 @@ These names were not re-checked against build 2908. If you want to use one of th
 ## Known limits and ideas
 
 - Tested by the author on charts of several types and intervals, live and in Bar Replay: the range and the bar count matched manual measurements, the bar count was colored as configured, and the time matched on intraday and daily charts. There are no automated tests.
-- On a Daily or higher chart the clock is the current time, not the time of the last tick, so on a closed market (weekend) it shows the wall clock while an intraday chart shows the last tick. On intraday charts the minute advances with the first tick of a new minute, so it can lag by a few seconds on a quiet market.
+- On a Daily or higher chart there is no time of the last tick: during a session the clock is the current time, and on a closed market or on a chart that ends in the past the header shows the last session's date with `00:00`. On intraday charts the minute advances with the first tick of a new minute, so it can lag by a few seconds on a quiet market.
 - Not yet measured: the CPU load with 40+ charts open. By design nearly every call returns at once.
 - Development logging (statistics, events) was removed in V4. It is still in the V2 and V3 tags.
 - Possible extension: symbol name and interval in the header. It must go through the existing text caches and change detection.
@@ -101,6 +101,7 @@ Versions are git tags: `chartinfo-v1`, `chartinfo-v2`, `chartinfo-v3`, `chartinf
 - **V2**: second line with the range of the visible bars (`R=<points> (<bars>B)`, rounded to the tick), `UpdateAlways`, cleanup of the drawings on removal and development logging (input `Log Level`).
 - **V3**: single line `MM/DD/YYYY HH:MM R=<points> (<bars>B)`: the price is removed and the range moved into the first line; the bar count is a separate drawing that turns red above a threshold (inputs 8-10); the second-line offset input (6) is retired.
 - **V4**: the bar count is colored when it differs from the threshold (fewer or more), not only above it; the clock works on Daily and higher charts; cheaper updates (cached range with O(1) updates for the last bar, cache of the drawn text); development logging and its input (7) removed; default horizontal position 146.
+- **V5**: Daily and higher charts show the date of the last session with `00:00` when that session is before today (weekend, holiday, "Date Range To" in the past, the cut D1BarReplay makes in a Bar Replay), and the current date and time otherwise. V4 showed the current date and time always, which was wrong on a weekend and on a chart cut to the past.
 
 ## Files
 
