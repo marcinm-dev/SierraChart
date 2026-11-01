@@ -29,6 +29,9 @@ SCSFExport scsf_Wzrostowe025equal(SCStudyInterfaceRef sc)
 		sc.DisplayStudyInputValues = 0; // Ukrywa parametry wejściowe[cite: 3, 4]
 		sc.GlobalDisplayStudySubgraphsNameAndValue = 0; // Ukrywa wartości subgrafów w nagłówku[cite: 3, 4]
 
+		// --- CONTROL BAR BUTTON ---
+		sc.Input[0].Name = "Numer Przycisku";
+		sc.Input[0].SetInt(65);
 		// --- KONFIGURACJA SUBGRAFU ---
 		Subgraph_Highlight.Name = "Wzrostowe Highlight";
 		Subgraph_Highlight.DrawStyle = DRAWSTYLE_COLOR_BAR;
@@ -46,6 +49,47 @@ SCSFExport scsf_Wzrostowe025equal(SCStudyInterfaceRef sc)
 		return;
 	}
 
+
+	// --- CONTROL BAR BUTTON: MASTER STATE ---
+	// Stays above the HideStudy return below: a hidden study must still see the click.
+	int Btn = sc.Input[0].GetInt();
+	int& MasterState = sc.GetPersistentInt(10);   // 1 visible, 0 hidden = single source of truth
+	int& Initialized = sc.GetPersistentInt(11);
+	int& LastHideStudy = sc.GetPersistentInt(12);
+
+	if (Initialized == 0)
+	{
+		MasterState = !sc.HideStudy;
+		LastHideStudy = sc.HideStudy;
+		Initialized = 1;
+	}
+
+	// Change state once per pass, never per bar
+	if (sc.Index == sc.UpdateStartIndex)
+	{
+		if (sc.MenuEventID == Btn)                 // button click (MenuEventID is NOT zeroed)
+		{
+			MasterState = !MasterState;
+			if (MasterState == 1) sc.FlagFullRecalculate = 1;
+		}
+		else if (sc.HideStudy != LastHideStudy)    // Hide Study changed in the settings (F6)
+		{
+			MasterState = !sc.HideStudy;
+			if (MasterState == 1) sc.FlagFullRecalculate = 1;
+		}
+	}
+
+	// Latch and UI update, once per pass
+	if (sc.Index == sc.ArraySize - 1)
+	{
+		sc.HideStudy = !MasterState;
+		LastHideStudy = sc.HideStudy;
+
+		sc.SetCustomStudyControlBarButtonEnable(Btn, MasterState);
+		sc.SetCustomStudyControlBarButtonText(Btn, "UP25e");
+
+		Subgraph_Highlight.DrawStyle = (MasterState == 1) ? DRAWSTYLE_COLOR_BAR : DRAWSTYLE_IGNORE;
+	}
 
 // Jeśli wskaźnik jest ukryty, natychmiast przerwij wykonywanie logiki.
 if (sc.HideStudy)
