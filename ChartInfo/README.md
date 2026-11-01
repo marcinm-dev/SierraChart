@@ -16,7 +16,7 @@ The text is meant to act as a watermark on screenshots, so a trade journal entry
 ## Features
 
 - **Single line, fixed screen position.** The text does not move when you scroll the chart or when the price scale changes. It is placed with window-relative coordinates, not with chart time and price.
-- **Market clock in the chart's time zone.** On charts built from intraday data the time is the time of the last tick (`sc.LatestDateTimeForLastBar`), so the minute advances inside a single bar and it also works in Bar Replay. Charts built from historical daily data (Daily, Weekly, Monthly, Quarterly) have no time of day: `sc.LatestDateTimeForLastBar` is the date of the last session at 00:00. When that session is today, the current time (replay time while replaying) is used. When it is earlier (weekend, holiday, a "Date Range To" in the past, the cut that D1BarReplay makes during a Bar Replay), the header shows the date of the last session with `00:00`. Both are shown in the time zone of the chart.
+- **Market clock in the chart's time zone.** On charts built from intraday data the time is the time of the last tick (`sc.LatestDateTimeForLastBar`), so the minute advances inside a single bar and it also works in Bar Replay. Charts built from historical daily data (Daily, Weekly, Monthly, Quarterly) have no time of day: `sc.LatestDateTimeForLastBar` is the date of the last session at 00:00. When that session is today, the current time (replay time while replaying) is used. When it is earlier (weekend, holiday, a "Date Range To" in the past, the cut that D1BarReplay makes during a Bar Replay), the header shows the date of the last session with `16:59`, the end of the ES session (since V6; V5 showed `00:00`). Both are shown in the time zone of the chart.
 - **Clock of the D1BarReplay master (optional).** A Daily or higher chart that is not replaying itself (the receiver of D1BarReplay) can take the date and time of the master chart (the chart with the Bar Replay) while that replay plays or is paused. It needs ChartInfo on the master too: the study on a chart built from intraday data keeps its clock in a persistent `SCDateTime` and the receiver reads it with `GetPersistentSCDateTimeFromChartStudy`. Without ChartInfo on the master, or when the replay is stopped, the receiver uses the rule above. The option works only on charts built from historical daily data; on intraday charts it is ignored.
 - **Range of the visible bars.** Calculated from `sc.IndexOfFirstVisibleBar` and `sc.IndexOfLastVisibleBar` and rounded with `sc.RoundToTickSize`, so it is always a multiple of the symbol's tick (for example `267.50` or `267.25` on ES). It follows scrolling, zooming and interval changes.
 - **Bar count warning.** The bar count is colored when the number of visible bars is not equal to the threshold (fewer or more).
@@ -47,7 +47,7 @@ Input indexes must not be renumbered: saved chartbooks depend on them. Reserved 
 
 1. Copy `ChartInfo.cpp` to your Sierra Chart `ACS_Source` folder (for example `C:\SierraChart\ACS_Source`).
 2. In Sierra Chart choose **Analysis > Build Custom Studies DLL**, select `ChartInfo.cpp` and build the **64-bit** DLL.
-3. Add the study **ChartInfo** to a chart through **Analysis > Studies > Add Custom Study**. When the study is added or loaded, the Message Log shows `ChartInfo V5 loaded`; use it to confirm which build is running.
+3. Add the study **ChartInfo** to a chart through **Analysis > Studies > Add Custom Study**. When the study is added or loaded, the Message Log shows `ChartInfo V6 loaded`; use it to confirm which build is running.
 4. Set the horizontal position (input 0) so the line sits where you want it.
 
 Keep only one DLL in `Data\` that exports `scsf_ChartInfo`. If two DLLs export the same function name, Sierra Chart may load the old one and your changes will seem to have no effect (the message log still says the DLL was loaded).
@@ -66,14 +66,13 @@ Keep only one DLL in `Data\` that exports `scsf_ChartInfo`. If two DLLs export t
 
 ### Performance design
 
-Four gates keep the study almost free. None of them should be removed when extending the study.
+Three gates keep the study almost free. None of them should be removed when extending the study. There is no own throttle: Sierra calls the study at the chart update interval anyway, and a throttle on the replay clock could block updates in a paused replay (removed in V6).
 
-1. **Throttling (200 ms).** The study does nothing if less than 0.2 s passed since the last draw, so at most 5 redraws per second even at hundreds of ticks per second.
-2. **Change detection.** Something is done only when the minute changed, the visible bars changed, the last bar went beyond a cached extreme of the range, or the range was switched on or off. A plain price tick does nothing, because the price is not shown.
-3. **Cached range and O(1) updates.** The extremes of the visible bars are cached. The loop over the visible bars runs only when the view changes (scroll, zoom, a new bar), on a full recalculation, when the range is missing, or when the last bar shrank (its high fell or its low rose, for example when Bar Replay steps back). While a bar is forming its high only rises and its low only falls, so a last bar that goes beyond a cached extreme just widens it (`HH = max(HH, High)`, `LL = min(LL, Low)`), and a last bar that stays inside the range does nothing. The last bar's high and low are compared, not its close, so a spike between two calls is not missed.
-4. **Text caches.** The date and time part is formatted once per minute. The texts and the color flag last sent to the chart are remembered, and the drawing calls are skipped when nothing visible changed.
+1. **Change detection.** Something is done only when the minute changed, the visible bars changed, or the high or low of the last bar changed while that bar is visible. A plain price tick does nothing, because the price is not shown. The last bar's high and low are compared, not its close, so a spike between two calls is not missed.
+2. **Range by a plain loop.** When the gate passes, the range is calculated by a loop over the visible bars (a few hundred iterations, microseconds, at most a few times per second). There is no cached range and no incremental update (removed in V6).
+3. **Text caches.** The date and time part is formatted once per minute. The texts and the color flag last sent to the chart are remembered, and the drawing calls are skipped when nothing visible changed (`UseTool` searches the chart's list of drawings, which can be long).
 
-All gates are bypassed when `sc.IsFullRecalculation` is true. This is the "first breath": after a symbol or interval change, or a chart reload, Sierra clears the drawings. With no incoming ticks (offline, weekend) the gates would otherwise block the redraw and the header would stay missing until the next tick. Changing a study input also causes a full recalculation, so a new threshold or color shows at once.
+All gates are bypassed when `sc.IsFullRecalculation` is true. This is the "first breath": after a symbol or interval change, or a chart reload, Sierra clears the drawings. With no incoming ticks (offline, weekend) the gates would otherwise block the redraw and the header would stay missing until the next tick. Changing a study input also causes a full recalculation, so a new threshold or color shows at once, and switching "Show Range of Visible Bars" on or off needs no state of its own.
 
 ## Compatibility notes
 
@@ -82,7 +81,7 @@ The project was developed on Sierra Chart build 2891 and the author now uses 290
 - `SCDT_DATE` / `SCDT_TIME` (date and time are built from `GetYear()`, `GetMonth()`, `GetDay()`, `GetHour()` and `GetMinute()` of `SCDateTime`)
 - `sc.AddTextToChartHeader`
 - `UseScreenCoordinates`, `UseChartRegionCoordinates` and similar flags
-- `sc.UpdateFrequencyInSeconds` and `sc.GetSystemTime()` (throttling uses `sc.GetCurrentDateTime()` instead)
+- `sc.UpdateFrequencyInSeconds` and `sc.GetSystemTime()`
 - `sc.DateTimeIn` (the working name is `sc.BaseDateTimeIn`)
 
 These names were not re-checked against build 2908. If you want to use one of them, grep `sierrachart.h` in your own `ACS_Source` first.
@@ -90,7 +89,7 @@ These names were not re-checked against build 2908. If you want to use one of th
 ## Known limits and ideas
 
 - Tested by the author on charts of several types and intervals, live and in Bar Replay: the range and the bar count matched manual measurements, the bar count was colored as configured, and the time matched on intraday and daily charts. There are no automated tests.
-- On a Daily or higher chart there is no time of the last tick: during a session the clock is the current time, and on a closed market or on a chart that ends in the past the header shows the last session's date with `00:00`. On intraday charts the minute advances with the first tick of a new minute, so it can lag by a few seconds on a quiet market.
+- On a Daily or higher chart there is no time of the last tick: during a session the clock is the current time, and on a closed market or on a chart that ends in the past the header shows the last session's date with `16:59` (a fixed time in the chart's time zone, right for ES and MES, not for instruments with another session end). On intraday charts the minute advances with the first tick of a new minute, so it can lag by a few seconds on a quiet market.
 - Not yet measured: the CPU load with 40+ charts open. By design nearly every call returns at once.
 - Development logging (statistics, events) was removed in V4. It is still in the V2 and V3 tags.
 - Possible extension: symbol name and interval in the header. It must go through the existing text caches and change detection.
@@ -98,13 +97,14 @@ These names were not re-checked against build 2908. If you want to use one of th
 
 ## Versions
 
-Versions are git tags: `chartinfo-v1`, `chartinfo-v2`, `chartinfo-v3`, `chartinfo-v4`, `chartinfo-v5`.
+Versions are git tags: `chartinfo-v1`, `chartinfo-v2`, `chartinfo-v3`, `chartinfo-v4`, `chartinfo-v5`, `chartinfo-v6`.
 
 - **V1**: fixed-position `MM/DD/YYYY HH:MM = Price` header with throttling, change detection, text caching, the `IsFullRecalculation` bypass and English code comments.
 - **V2**: second line with the range of the visible bars (`R=<points> (<bars>B)`, rounded to the tick), `UpdateAlways`, cleanup of the drawings on removal and development logging (input `Log Level`).
 - **V3**: single line `MM/DD/YYYY HH:MM R=<points> (<bars>B)`: the price is removed and the range moved into the first line; the bar count is a separate drawing that turns red above a threshold (inputs 8-10); the second-line offset input (6) is retired.
 - **V4**: the bar count is colored when it differs from the threshold (fewer or more), not only above it; the clock works on Daily and higher charts; cheaper updates (cached range with O(1) updates for the last bar, cache of the drawn text); development logging and its input (7) removed; default horizontal position 146.
 - **V5**: Daily and higher charts show the date of the last session with `00:00` when that session is before today (weekend, holiday, "Date Range To" in the past, the cut D1BarReplay makes in a Bar Replay), and the current date and time otherwise. V4 showed the current date and time always, which was wrong on a weekend and on a chart cut to the past. New inputs 11-12: a Daily or higher chart can take the date and time of the D1BarReplay master chart while its Bar Replay runs (ChartInfo is needed on the master).
+- **V6**: simplification, same inputs and header. Removed the own 200 ms throttle (Sierra's call interval does that, and the replay clock could block it in a paused replay), the O(1) range path (the range is a plain loop whenever the gate passes), the separate state for "Show Range" switched off (a changed input causes a full recalculation), and the persistent for the drawing line number; one helper draws both texts; 10 persistents instead of 17. The date of a closed or past session on Daily and higher charts is shown with `16:59` instead of `00:00`.
 
 ## Files
 
