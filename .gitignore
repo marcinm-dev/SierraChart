@@ -1,9 +1,8 @@
 # Repository holds only the study sources and their READMEs. Everything else stays local.
+# Layout: one folder per study (<Study>/<Study>.cpp + <Study>/README.md) and a root README.md.
 *
 !.gitignore
-!D1BarReplay_README.md
-!D1BarReplay.cpp
-!DMA3x3.cpp
-!DMA3x3_README.md
-!ChartInfo.cpp
-!ChartInfo_README.md
+!README.md
+!*/
+!*/*.cpp
+!*/README.md

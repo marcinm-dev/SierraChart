@@ -109,4 +109,4 @@ Versions are git tags: `chartinfo-v1`, `chartinfo-v2`, `chartinfo-v3`, `chartinf
 ## Files
 
 - `ChartInfo.cpp` - the study source.
-- `ChartInfo_README.md` - this file.
+- `README.md` - this file.
