@@ -12,12 +12,12 @@ Each study has a Control Bar button that shows or hides it. The button logic is 
 | `HighlightBar_NewHigherHigh.cpp` | `High > previous High` | red | 61 | `NEW HIGHER HIGH` -> `HH` |
 | `HighlightBar_NewHigherLow.cpp` | `Low >= previous Low` | red | 62 | `NEW HIGHER LOW` -> `HL` |
 | `HighlightBar_NewLowerHigh.cpp` | `High <= previous High` | red | 63 | `NEW LOWER HIGH` -> `LH` |
-| `HighlightBar_wzrostowe_025notequal.cpp` | `(High - Close) < 0.25 * (High - Low)` | green | 64 | `UP25` |
-| `HighlightBar_wzrostowe_025equal.cpp` | `(High - Close) <= 0.25 * (High - Low)` | green | 65 | `UP25e` |
-| `HighlightBar_wzrostowe_05notequal.cpp` | `(High - Close) < 0.5 * (High - Low)` | green | 66 | `UP50` |
-| `HighlightBar_spadkowe_025notequal.cpp` | `(Close - Low) < 0.25 * (High - Low)` | red | 67 | `DOWN25` |
-| `HighlightBar_spadkowe_025equal.cpp` | `(Close - Low) <= 0.25 * (High - Low)` | red | 68 | `DOWN25e` |
-| `HighlightBar_spadkowe_05notequal.cpp` | `(Close - Low) < 0.5 * (High - Low)` | red | 69 | `DOWN50` |
+| `HighlightBar_UP_025notequal.cpp` | `(High - Close) < 0.25 * (High - Low)` | green | 64 | `UP25` |
+| `HighlightBar_UP_025equal.cpp` | `(High - Close) <= 0.25 * (High - Low)` | green | 65 | `UP25e` |
+| `HighlightBar_UP_05notequal.cpp` | `(High - Close) < 0.5 * (High - Low)` | green | 66 | `UP50` |
+| `HighlightBar_DOWN_025notequal.cpp` | `(Close - Low) < 0.25 * (High - Low)` | red | 67 | `DOWN25` |
+| `HighlightBar_DOWN_025equal.cpp` | `(Close - Low) <= 0.25 * (High - Low)` | red | 68 | `DOWN25e` |
+| `HighlightBar_DOWN_05notequal.cpp` | `(Close - Low) < 0.5 * (High - Low)` | red | 69 | `DOWN50` |
 
 Bars with a zero range are never coloured by the last six studies. Source comments are in Polish for now.
 
