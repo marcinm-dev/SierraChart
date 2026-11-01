@@ -1,56 +1,57 @@
 #include "sierrachart.h"
 
-// Definicja nazwy biblioteki DLL - kluczowe dla kompilacji zdalnej
-SCDLLName("New Lower Low") 
+// DLL name definition - key for remote compilation
+SCDLLName("New Lower Low")
 
 /*==========================================================================*/
 SCSFExport scsf_NewLowerLow(SCStudyInterfaceRef sc)
 {
-	// Referencja do subgrafu - używamy wzorca z scsf_InsideBar
+	// Reference to the subgraph - pattern taken from scsf_InsideBar
 	SCSubgraphRef Subgraph_Highlight = sc.Subgraph[0];
 
-
-// ETAP 1: Konfiguracja domyślna (Tryb Stealth V5 - Fix)
+	// STAGE 1: Default configuration (Stealth mode V5 - Fix)
 	if (sc.SetDefaults)
 	{
 		sc.GraphName = "New Lower Low";
-		sc.GraphRegion = 0; 
+		sc.GraphRegion = 0;
 		sc.AutoLoop = 1;
 
-// --- FLAGI OPTYMALIZACJI INTERFEJSU (STEALTH V7 - FINAL FIX) ---
-		sc.UpdateAlways = 0; // CPU Guard: Aktualizacja tylko przy nowym ticku[cite: 1, 4]
-		
-		// KOREKTA: Przekazanie wymaganych parametrów ChartNumber oraz StudyID
-		int32_t StudyID = sc.StudyGraphInstanceID; 
+		// --- UI OPTIMISATION FLAGS (STEALTH V7 - FINAL FIX) ---
+		sc.UpdateAlways = 0; // CPU Guard: update only on a new tick
+
+		// FIX: pass the required ChartNumber and StudyID parameters
+		int32_t StudyID = sc.StudyGraphInstanceID;
 		int32_t DisableValue = 0;
-		sc.SetStudyAlwaysShowNameValueLabelsWhenEnabled(sc.ChartNumber, StudyID, DisableValue); //
+		sc.SetStudyAlwaysShowNameValueLabelsWhenEnabled(sc.ChartNumber, StudyID, DisableValue);
 
-
-		
-		sc.DisplayStudyName = 0; // Ukrywa nazwę wskaźnika na wykresie[cite: 3, 4]
-		sc.DisplayStudyInputValues = 0; // Ukrywa parametry wejściowe[cite: 3, 4]
-		sc.GlobalDisplayStudySubgraphsNameAndValue = 0; // Ukrywa wartości subgrafów w nagłówku[cite: 3, 4]
+		sc.DisplayStudyName = 0; // Hides the study name on the chart
+		sc.DisplayStudyInputValues = 0; // Hides the input values
+		sc.GlobalDisplayStudySubgraphsNameAndValue = 0; // Hides subgraph values in the header
 
 		// --- CONTROL BAR BUTTON ---
 		sc.Input[0].Name = "Numer Przycisku";
 		sc.Input[0].SetInt(60);
-		// --- KONFIGURACJA SUBGRAFU ---
+
+		// --- SUBGRAPH CONFIGURATION ---
 		Subgraph_Highlight.Name = "New Lower Low";
 		Subgraph_Highlight.DrawStyle = DRAWSTYLE_COLOR_BAR;
-	Subgraph_Highlight.PrimaryColor = RGB(255, 0, 0); 
-		Subgraph_Highlight.DrawZeros = false; 
+		Subgraph_Highlight.PrimaryColor = RGB(255, 0, 0);
+		Subgraph_Highlight.DrawZeros = false;
 
-		// KOREKTA ETYKIET: Wyłączenie nazw i wartości na poziomie subgrafu[cite: 1]
-		Subgraph_Highlight.LineLabel = 0; // Odznacza "Name Label" i "Value Label"[cite: 1, 3]
-		
-		Subgraph_Highlight.IncludeInStudySummary = 0; //[cite: 1, 3]
-		Subgraph_Highlight.IncludeInSpreadsheet = 0; //[cite: 1, 3]
-		Subgraph_Highlight.DisplayNameValueInDataLine = 0; //[cite: 1, 3]
-		Subgraph_Highlight.DisplayNameValueInWindowsFlags = 0; //[cite: 1, 3]
+		// LABEL FIX: turn off names and values at the subgraph level
+		Subgraph_Highlight.LineLabel = 0; // Clears "Name Label" and "Value Label"
+
+		Subgraph_Highlight.IncludeInStudySummary = 0;
+		Subgraph_Highlight.IncludeInSpreadsheet = 0;
+		Subgraph_Highlight.DisplayNameValueInDataLine = 0;
+		Subgraph_Highlight.DisplayNameValueInWindowsFlags = 0;
 
 		return;
 	}
 
+	// Hidden study: only the event bar (click / F6) and the last bar (latch) must run
+	if (sc.HideStudy && sc.Index != sc.UpdateStartIndex && sc.Index != sc.ArraySize - 1)
+		return;
 
 	// --- CONTROL BAR BUTTON: MASTER STATE ---
 	// Stays above the HideStudy return below: a hidden study must still see the click.
@@ -89,30 +90,27 @@ SCSFExport scsf_NewLowerLow(SCStudyInterfaceRef sc)
 
 		sc.SetCustomStudyControlBarButtonEnable(Btn, MasterState);
 		sc.SetCustomStudyControlBarButtonText(Btn, "LL");
-
-		Subgraph_Highlight.DrawStyle = (MasterState == 1) ? DRAWSTYLE_COLOR_BAR : DRAWSTYLE_IGNORE;
 	}
 
-// Jeśli wskaźnik jest ukryty, natychmiast przerwij wykonywanie logiki.
-if (sc.HideStudy)
-    return;
+	// If the study is hidden, stop executing the logic immediately
+	if (sc.HideStudy)
+		return;
 
+	// STAGE 2 & 3: Surgical logic and rendering (Lower Low)
 
-// ETAP 2 & 3: Logika Chirurgiczna i Renderowanie (Lower Low)
-	
-	// Zabezpieczenie przed wyjściem poza indeks 0 przy sprawdzaniu bara wstecz
+	// Guard against stepping before index 0 when checking the previous bar (the Index Guard)
 	if (sc.Index > 0)
 	{
-		// Translacja Trade Sense: "Low < Low.1" na ASCIL
+		// Trade Sense translation: "Low < Low.1" to ACSIL
 		if (sc.Low[sc.Index] < sc.Low[sc.Index - 1])
 		{
-			// Aktywacja podświetlenia dla bieżącego bara[cite: 1]
+			// Turn the highlight on for the current bar
 			Subgraph_Highlight[sc.Index] = 1.0f;
 			Subgraph_Highlight.DataColor[sc.Index] = Subgraph_Highlight.PrimaryColor;
 		}
 		else
 		{
-			// Resetowanie stanu dla zachowania czystości wizualnej[cite: 1]
+			// Reset the state to keep the chart clean
 			Subgraph_Highlight[sc.Index] = 0.0f;
 		}
 	}

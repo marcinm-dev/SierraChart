@@ -19,11 +19,11 @@ Each study has a Control Bar button that shows or hides it. The button logic is 
 | `HighlightBar_DOWN_025equal.cpp` | `(Close - Low) <= 0.25 * (High - Low)` | red | 68 | `DOWN25e` |
 | `HighlightBar_DOWN_05notequal.cpp` | `(Close - Low) < 0.5 * (High - Low)` | red | 69 | `DOWN50` |
 
-Bars with a zero range are never coloured by the last six studies. Source comments are in Polish for now.
+Bars with a zero range are never coloured by the last six studies. Like Trade Navigator, these six round the threshold (`0.25 * range` or `0.5 * range`) to the tick size with `sc.RoundToTickSize` (to the nearest tick, a half tick goes up) and only then compare. Source comments are in English; the names visible in Sierra Chart (study and subgraph names) are still Polish for the `UP` and `DOWN` studies.
 
 ## Control Bar buttons
 
-The button number is an input (`Numer Przycisku`) and must match the Custom Study button number added to the Control Bar. The captions of the first four studies are shortened in the source (`LL`, `HH`, `HL`, `LH`); the table lists the names they replaced. The state is kept in persistent variables 10-12 of each study, so the studies do not interfere with each other. Clicking the button, changing **Hide Study** in the study settings and restarting Sierra Chart are meant to keep button and study in step; showing a hidden study forces a full recalculation.
+The button number is an input (`Numer Przycisku`) and must match the Custom Study button number added to the Control Bar. The captions of the first four studies are shortened in the source (`LL`, `HH`, `HL`, `LH`); the table lists the names they replaced. The state is kept in persistent variables 10-12 of each study, so the studies do not interfere with each other. Clicking the button, changing **Hide Study** in the study settings and restarting Sierra Chart are meant to keep button and study in step; showing a hidden study forces a full recalculation. A hidden study skips all bars except the click/F6 bar and the last bar, so it costs almost nothing on a full recalculation. The button does not touch the draw style of the subgraph, so the style chosen in the study settings is kept.
 
 ## Building
 
