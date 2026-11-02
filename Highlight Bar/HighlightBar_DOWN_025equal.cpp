@@ -6,8 +6,10 @@ SCDLLName("Spadkowe 0.25 equal")
 /*==========================================================================*/
 SCSFExport scsf_Spadkowe025equal(SCStudyInterfaceRef sc)
 {
-	// Reference to the subgraph - pattern taken from scsf_InsideBar
+	// References to the subgraphs - pattern taken from scsf_InsideBar
+	// [0] = strict bars (the "<" test), [1] = borderline bars (exactly on the rounded line)
 	SCSubgraphRef Subgraph_Highlight = sc.Subgraph[0];
+	SCSubgraphRef Subgraph_Borderline = sc.Subgraph[1];
 
 	// STAGE 1: Default configuration (Stealth mode V5 - Fix)
 	if (sc.SetDefaults)
@@ -35,7 +37,7 @@ SCSFExport scsf_Spadkowe025equal(SCStudyInterfaceRef sc)
 		// --- SUBGRAPH CONFIGURATION ---
 		Subgraph_Highlight.Name = "Spadkowe Highlight";
 		Subgraph_Highlight.DrawStyle = DRAWSTYLE_COLOR_BAR;
-		Subgraph_Highlight.PrimaryColor = RGB(0, 0, 255);
+		Subgraph_Highlight.PrimaryColor = RGB(255, 0, 0);
 		Subgraph_Highlight.DrawZeros = false;
 
 		// LABEL FIX: turn off names and values at the subgraph level
@@ -45,6 +47,16 @@ SCSFExport scsf_Spadkowe025equal(SCStudyInterfaceRef sc)
 		Subgraph_Highlight.IncludeInSpreadsheet = 0;
 		Subgraph_Highlight.DisplayNameValueInDataLine = 0;
 		Subgraph_Highlight.DisplayNameValueInWindowsFlags = 0;
+
+		Subgraph_Borderline.Name = "Spadkowe Graniczne";
+		Subgraph_Borderline.DrawStyle = DRAWSTYLE_COLOR_BAR;
+		Subgraph_Borderline.PrimaryColor = RGB(0, 0, 255);
+		Subgraph_Borderline.DrawZeros = false;
+		Subgraph_Borderline.LineLabel = 0;
+		Subgraph_Borderline.IncludeInStudySummary = 0;
+		Subgraph_Borderline.IncludeInSpreadsheet = 0;
+		Subgraph_Borderline.DisplayNameValueInDataLine = 0;
+		Subgraph_Borderline.DisplayNameValueInWindowsFlags = 0;
 
 		return;
 	}
@@ -109,23 +121,25 @@ SCSFExport scsf_Spadkowe025equal(SCStudyInterfaceRef sc)
 	{
 		// Trade Navigator formula ported to ACSIL. The 0.25f factor is hard-coded.
 		// Like Trade Navigator, round the threshold to the tick size, then compare.
-		// This study paints only the borderline bars: the ones the "<=" test lights but the strict "<" test
-		// (the non-equal study) does not, i.e. the bar sits exactly on the rounded line.
+		// Strict bars (the "<" test) go to the first subgraph. Borderline bars (the "<=" test lights them,
+		// the strict one does not, i.e. they sit exactly on the rounded line) go to the second subgraph.
 		float Threshold = sc.RoundToTickSize(0.25f * Range);
-		if ((Close - Low) <= Threshold && !((Close - Low) < Threshold))
+		Subgraph_Highlight[sc.Index] = 0.0f;
+		Subgraph_Borderline[sc.Index] = 0.0f;
+		if ((Close - Low) < Threshold)
 		{
-			// Turn the highlight on for the current bar
 			Subgraph_Highlight[sc.Index] = 1.0f;
 			Subgraph_Highlight.DataColor[sc.Index] = Subgraph_Highlight.PrimaryColor;
 		}
-		else
+		else if ((Close - Low) <= Threshold)
 		{
-			// Reset the value so DrawZeros = false can take effect
-			Subgraph_Highlight[sc.Index] = 0.0f;
+			Subgraph_Borderline[sc.Index] = 1.0f;
+			Subgraph_Borderline.DataColor[sc.Index] = Subgraph_Borderline.PrimaryColor;
 		}
 	}
 	else
 	{
 		Subgraph_Highlight[sc.Index] = 0.0f;
+		Subgraph_Borderline[sc.Index] = 0.0f;
 	}
 }
