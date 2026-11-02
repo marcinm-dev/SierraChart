@@ -50,7 +50,7 @@ SCSFExport scsf_Wzrostowe025equal(SCStudyInterfaceRef sc)
 
 		Subgraph_Borderline.Name = "Wzrostowe Graniczne";
 		Subgraph_Borderline.DrawStyle = DRAWSTYLE_COLOR_BAR;
-		Subgraph_Borderline.PrimaryColor = RGB(0, 0, 255);
+		Subgraph_Borderline.PrimaryColor = RGB(0, 128, 255);
 		Subgraph_Borderline.DrawZeros = false;
 		Subgraph_Borderline.LineLabel = 0;
 		Subgraph_Borderline.IncludeInStudySummary = 0;
