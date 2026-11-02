@@ -13,13 +13,13 @@ Each study has a Control Bar button that shows or hides it. The button logic is 
 | `HighlightBar_NewHigherLow.cpp` | `Low >= previous Low` | red | 62 | `NEW HIGHER LOW` -> `HL` |
 | `HighlightBar_NewLowerHigh.cpp` | `High <= previous High` | red | 63 | `NEW LOWER HIGH` -> `LH` |
 | `HighlightBar_UP_025notequal.cpp` | `(High - Close) < 0.25 * (High - Low)` | green | 64 | `UP25` |
-| `HighlightBar_UP_025equal.cpp` | `(High - Close) <= 0.25 * (High - Low)` | green | 65 | `UP25e` |
+| `HighlightBar_UP_025equal.cpp` | `(High - Close) <= 0.25 * (High - Low)`, borderline bars only | blue | 65 | `UP25e` |
 | `HighlightBar_UP_05notequal.cpp` | `(High - Close) < 0.5 * (High - Low)` | green | 66 | `UP50` |
 | `HighlightBar_DOWN_025notequal.cpp` | `(Close - Low) < 0.25 * (High - Low)` | red | 67 | `DOWN25` |
-| `HighlightBar_DOWN_025equal.cpp` | `(Close - Low) <= 0.25 * (High - Low)` | red | 68 | `DOWN25e` |
+| `HighlightBar_DOWN_025equal.cpp` | `(Close - Low) <= 0.25 * (High - Low)`, borderline bars only | blue | 68 | `DOWN25e` |
 | `HighlightBar_DOWN_05notequal.cpp` | `(Close - Low) < 0.5 * (High - Low)` | red | 69 | `DOWN50` |
 
-Bars with a zero range are never coloured by the last six studies. Like Trade Navigator, these six round the threshold (`0.25 * range` or `0.5 * range`) to the tick size with `sc.RoundToTickSize` (to the nearest tick, a half tick goes up) and only then compare. Source comments are in English; the names visible in Sierra Chart (study and subgraph names) are still Polish for the `UP` and `DOWN` studies.
+Bars with a zero range are never coloured by the last six studies. The two `equal` studies (`UP25e`, `DOWN25e`) paint only the borderline bars in blue: the bars that sit exactly on the rounded 25% line, which the `<=` test lights and the strict `<` study (`UP25`, `DOWN25`) does not. Together the strict study (green or red) and the `equal` study (blue) cover everything the `<=` test would light, and no bar is painted by both. Like Trade Navigator, these six round the threshold (`0.25 * range` or `0.5 * range`) to the tick size with `sc.RoundToTickSize` (to the nearest tick, a half tick goes up) and only then compare. Source comments are in English; the names visible in Sierra Chart (study and subgraph names) are still Polish for the `UP` and `DOWN` studies.
 
 ## Control Bar buttons
 

@@ -35,7 +35,7 @@ SCSFExport scsf_Wzrostowe025equal(SCStudyInterfaceRef sc)
 		// --- SUBGRAPH CONFIGURATION ---
 		Subgraph_Highlight.Name = "Wzrostowe Highlight";
 		Subgraph_Highlight.DrawStyle = DRAWSTYLE_COLOR_BAR;
-		Subgraph_Highlight.PrimaryColor = RGB(0, 192, 0);
+		Subgraph_Highlight.PrimaryColor = RGB(0, 0, 255);
 		Subgraph_Highlight.DrawZeros = false;
 
 		// LABEL FIX: turn off names and values at the subgraph level
@@ -109,7 +109,10 @@ SCSFExport scsf_Wzrostowe025equal(SCStudyInterfaceRef sc)
 	{
 		// Trade Navigator formula ported to ACSIL. The 0.25f factor is hard-coded.
 		// Like Trade Navigator, round the threshold to the tick size, then compare.
-		if ((High - Close) <= sc.RoundToTickSize(0.25f * Range))
+		// This study paints only the borderline bars: the ones the "<=" test lights but the strict "<" test
+		// (the non-equal study) does not, i.e. the bar sits exactly on the rounded line.
+		float Threshold = sc.RoundToTickSize(0.25f * Range);
+		if ((High - Close) <= Threshold && !((High - Close) < Threshold))
 		{
 			// Turn the highlight on for the current bar
 			Subgraph_Highlight[sc.Index] = 1.0f;
