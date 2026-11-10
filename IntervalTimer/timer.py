@@ -41,6 +41,7 @@ SOUND_COUNTER = itertools.count(1)
 # Look of the window (a flat, light theme)
 UI_FONT = "Segoe UI"
 MIN_WINDOW_WIDTH = 560
+COUNTDOWN_FONT_SIZE = 22         # the countdown and its messages ("Time left", "Start in", ...)
 COLOR_BG = "#f4f6f9"
 COLOR_TEXT = "#1f2937"
 COLOR_MUTED = "#6b7280"          # idle / no countdown
@@ -92,7 +93,7 @@ class IntervalTimerApp:
         style.configure(".", background=COLOR_BG, foreground=COLOR_TEXT, font=font)
         style.configure("TFrame", background=COLOR_BG)
         style.configure("TLabel", background=COLOR_BG, foreground=COLOR_TEXT, font=font)
-        style.configure("Countdown.TLabel", font=(UI_FONT, 34, "bold"))
+        style.configure("Countdown.TLabel", font=(UI_FONT, COUNTDOWN_FONT_SIZE, "bold"))
 
         # Entries: white field, thin grey border that turns blue when the field has the focus
         style.configure("TEntry", fieldbackground="white", foreground=COLOR_TEXT, insertcolor=COLOR_TEXT,
