@@ -7,6 +7,7 @@ import json
 import math
 import os
 import threading
+import traceback
 from pathlib import Path
 
 try:
@@ -14,7 +15,8 @@ try:
 except ImportError:
     winsound = None
 
-# The settings file lives next to the script, whatever directory the program is started from
+# The settings file lives next to the script, whatever directory the program is started from.
+# It holds only the interval and the path of the sound file (written by the SAVE button).
 SETTINGS_FILE = Path(__file__).resolve().parent / "timer_settings.json"
 
 # How often (in milliseconds) the time is checked; the alarm is late by at most this much
@@ -25,12 +27,26 @@ MESSAGE_SECONDS = 2
 REACTION_SECONDS = 20
 # Minimum lead (in seconds) between the ClosestInterval click and the calculated start
 MIN_LEAD_SECONDS = 1
+# Longest accepted interval (one day); a larger value is almost certainly a typing mistake
+MAX_INTERVAL_MINUTES = 1440
+# How long (in milliseconds) the SAVE button shows "Saved!"
+SAVED_FEEDBACK_MS = 1500
 # Fallback beep used when the sound file is missing or cannot be played
 FALLBACK_BEEP_HZ = 1000
 FALLBACK_BEEP_MS = 500
 
 # Counter for unique MCI aliases (every playback gets its own)
 SOUND_COUNTER = itertools.count(1)
+
+
+def format_hms(total_seconds):
+    # MM:SS below one hour, H:MM:SS from one hour on (so a long wait never shows "1380:12")
+    total_seconds = max(0, int(total_seconds))
+    hours, rest = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(rest, 60)
+    if hours:
+        return f"{hours}:{minutes:02}:{seconds:02}"
+    return f"{minutes:02}:{seconds:02}"
 
 
 class IntervalTimerApp:
@@ -76,10 +92,14 @@ class IntervalTimerApp:
         self.closest_button = ttk.Button(time_frame, text="ClosestInterval", command=self.closest_interval)
         self.closest_button.grid(row=0, column=6, padx=(5, 0))
 
-        # Interval (minutes)
+        # Interval (minutes) + SAVE (saves the interval and the sound file to the settings file)
         ttk.Label(self.root, text="Interval (minutes):").grid(row=1, column=0, sticky="e", padx=5, pady=5)
-        self.interval_entry = ttk.Entry(self.root, width=10)
-        self.interval_entry.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        interval_frame = ttk.Frame(self.root)
+        interval_frame.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        self.interval_entry = ttk.Entry(interval_frame, width=10)
+        self.interval_entry.grid(row=0, column=0)
+        self.save_button = ttk.Button(interval_frame, text="SAVE", command=self.save_clicked)
+        self.save_button.grid(row=0, column=1, padx=(10, 0))
 
         # Sound (optional; the system beep is used when it is empty)
         ttk.Label(self.root, text="Sound (optional):").grid(row=2, column=0, sticky="e", padx=5, pady=5)
@@ -106,19 +126,11 @@ class IntervalTimerApp:
         self.stop_button = ttk.Button(button_frame, text="Stop", command=self.stop_timer)
         self.stop_button.grid(row=0, column=1)
 
-        # Load the saved values into the fields
-        if self.settings.get("start_time"):
-            try:
-                h, m, s = map(int, str(self.settings["start_time"]).split(":"))
-                self.hour_entry.insert(0, f"{h:02}")
-                self.minute_entry.insert(0, f"{m:02}")
-                self.second_entry.insert(0, f"{s:02}")
-            except ValueError:
-                pass
+        # Load the saved interval and sound file into the fields (the start time is never saved)
         if self.settings.get("interval"):
             self.interval_entry.insert(0, str(self.settings["interval"]))
         if self.settings.get("sound_path"):
-            self.sound_entry.insert(0, self.settings["sound_path"])
+            self.sound_entry.insert(0, str(self.settings["sound_path"]))
 
     def set_time_fields(self, moment):
         self.hour_entry.delete(0, tk.END)
@@ -144,14 +156,21 @@ class IntervalTimerApp:
         n = (now - midnight + reaction + lead) // interval + 1
         return midnight + n * interval - reaction
 
-    def closest_interval(self):
+    def parse_interval(self):
+        # Returns the interval in minutes, or None after showing an error message
         try:
             interval_min = int(self.interval_entry.get())
         except ValueError:
             messagebox.showerror("Error", "The interval must be a whole number of minutes.")
-            return
-        if interval_min < 1:
-            messagebox.showerror("Error", "The interval must be at least 1 minute.")
+            return None
+        if not 1 <= interval_min <= MAX_INTERVAL_MINUTES:
+            messagebox.showerror("Error", f"The interval must be between 1 and {MAX_INTERVAL_MINUTES} minutes.")
+            return None
+        return interval_min
+
+    def closest_interval(self):
+        interval_min = self.parse_interval()
+        if interval_min is None:
             return
 
         # Enter the calculated time and start exactly as if Start had been clicked
@@ -164,18 +183,30 @@ class IntervalTimerApp:
             self.sound_entry.delete(0, tk.END)
             self.sound_entry.insert(0, file_path)
 
-    def save_settings(self, start_hour, start_minute, start_second, interval_min, sound_path):
+    def save_settings(self, interval_min, sound_path):
+        # Only the interval and the sound file are stored; the start time is different every day
         self.settings = {
-            "start_time": f"{start_hour:02}:{start_minute:02}:{start_second:02}",
             "interval": interval_min,
             "sound_path": sound_path
         }
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.settings, f)
+            return True
         except OSError as e:
-            # A failed save must not block the timer
             print("Could not save the settings:", e)
+            return False
+
+    def save_clicked(self):
+        interval_min = self.parse_interval()
+        if interval_min is None:
+            return
+        if self.save_settings(interval_min, self.sound_entry.get().strip()):
+            # Short confirmation on the button itself (no extra window to click away)
+            self.save_button.config(text="Saved!")
+            self.root.after(SAVED_FEEDBACK_MS, lambda: self.save_button.config(text="SAVE"))
+        else:
+            messagebox.showerror("Error", f"Could not write the settings file:\n{SETTINGS_FILE}")
 
     def load_settings(self):
         self.settings = {}
@@ -199,16 +230,18 @@ class IntervalTimerApp:
             start_hour = int(self.hour_entry.get())
             start_minute = int(self.minute_entry.get())
             start_second = int(self.second_entry.get())
-            interval_min = int(self.interval_entry.get())
         except ValueError:
-            messagebox.showerror("Error", "Hour, minute, second and interval must be whole numbers.")
+            messagebox.showerror(
+                "Error",
+                "The start time (hour, minute, second) must be whole numbers.\n"
+                "Use \"Current time\" or \"ClosestInterval\" to fill it in.")
             return
-
         if not (0 <= start_hour <= 23 and 0 <= start_minute <= 59 and 0 <= start_second <= 59):
             messagebox.showerror("Error", "The start time must be between 00:00:00 and 23:59:59.")
             return
-        if interval_min < 1:
-            messagebox.showerror("Error", "The interval must be at least 1 minute.")
+
+        interval_min = self.parse_interval()
+        if interval_min is None:
             return
 
         # A sound file that was set but does not exist is almost certainly a mistake: say so now,
@@ -223,7 +256,6 @@ class IntervalTimerApp:
                 return
 
         self.sound_path = sound_path
-        self.save_settings(start_hour, start_minute, start_second, interval_min, self.sound_path)
 
         # Starting again replaces the previous countdown instead of running a second one
         self.cancel_loop()
@@ -235,7 +267,12 @@ class IntervalTimerApp:
         now = datetime.datetime.now().replace(microsecond=0)
         self.start_time = now.replace(hour=start_hour, minute=start_minute, second=start_second)
         if self.start_time < now:
-            self.start_time += datetime.timedelta(days=1)
+            # The time has already passed today (for example a leftover from yesterday). Keep the grid
+            # of intervals that began at that time: move the start to the beginning of the interval
+            # that is running now, so the next alarm comes at the next grid point, never a day later
+            passed = int((now - self.start_time).total_seconds())
+            full_intervals = passed // self.interval_seconds
+            self.start_time += datetime.timedelta(seconds=full_intervals * self.interval_seconds)
         # Play the start sound only when there really was a "Start in" phase
         self.waiting_for_start = self.start_time > now
 
@@ -253,7 +290,7 @@ class IntervalTimerApp:
         # Show the interval before the start, in blue
         try:
             interval_min = int(self.interval_entry.get())
-            self.countdown_label.config(text=f"Time left: {interval_min:02}:00", foreground="blue")
+            self.countdown_label.config(text=f"Time left: {format_hms(interval_min * 60)}", foreground="blue")
         except ValueError:
             self.countdown_label.config(text="Time left: --:--", foreground="black")
 
@@ -261,14 +298,22 @@ class IntervalTimerApp:
         self.after_id = None
         if not self.running:
             return
+        try:
+            self.tick()
+        except Exception:
+            # Report the problem, but never let one failure stop the countdown:
+            # the next tick is always scheduled below
+            traceback.print_exc()
+        finally:
+            if self.running:
+                self.after_id = self.root.after(TICK_MS, self.update_countdown)
 
+    def tick(self):
         now = datetime.datetime.now()
         if now < self.start_time:
             # The countdown has not started yet: show the time left until the start
             diff = (self.start_time - now).total_seconds()
-            mins, secs = divmod(math.ceil(diff), 60)
-            self.countdown_label.config(text=f"Start in: {mins:02}:{secs:02}", foreground="blue")
-            self.after_id = self.root.after(TICK_MS, self.update_countdown)
+            self.countdown_label.config(text=f"Start in: {format_hms(math.ceil(diff))}", foreground="blue")
             return
 
         elapsed = (now - self.start_time).total_seconds()
@@ -294,10 +339,7 @@ class IntervalTimerApp:
         elif self.message_until is None or now >= self.message_until:
             self.message_until = None
             remaining = self.interval_seconds - elapsed
-            mins, secs = divmod(math.ceil(remaining), 60)
-            self.countdown_label.config(text=f"Time left: {mins:02}:{secs:02}", foreground="green")
-
-        self.after_id = self.root.after(TICK_MS, self.update_countdown)
+            self.countdown_label.config(text=f"Time left: {format_hms(math.ceil(remaining))}", foreground="green")
 
     def play_sound(self):
         # The timer is never silent: without a playable file the system beep is used instead
