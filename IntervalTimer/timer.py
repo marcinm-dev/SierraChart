@@ -14,6 +14,10 @@ SETTINGS_FILE = Path(__file__).resolve().parent / "timer_settings.json"
 TICK_MS = 200
 # Jak dlugo (w sekundach) zostaje na ekranie komunikat o koncu interwalu
 MESSAGE_SECONDS = 2
+# O ile sekund przed zamknieciem swiecy ma zadzwonic alarm przycisku ClosestInterval (czas na reakcje)
+REACTION_SECONDS = 20
+# Minimalny zapas (w sekundach) miedzy kliknieciem ClosestInterval a wyliczonym startem
+MIN_LEAD_SECONDS = 1
 
 
 class IntervalTimerApp:
@@ -29,6 +33,7 @@ class IntervalTimerApp:
         self.sound_path = ""
         self.after_id = None        # id zaplanowanego tiku, zeby moc go anulowac
         self.message_until = None   # do kiedy pokazujemy komunikat o koncu interwalu
+        self.waiting_for_start = False  # True, gdy trwa faza "Start za" (dzwiek zagra w chwili startu)
 
         self.load_settings()
 
@@ -86,6 +91,9 @@ class IntervalTimerApp:
         self.reset_button = ttk.Button(button_frame, text="Reset", command=self.reset_timer)
         self.reset_button.grid(row=0, column=2, padx=10)
 
+        self.closest_button = ttk.Button(button_frame, text="ClosestInterval", command=self.closest_interval)
+        self.closest_button.grid(row=0, column=3, padx=10)
+
         # Wczytaj wartości z ustawień do UI
         if self.settings.get("start_time"):
             try:
@@ -100,14 +108,43 @@ class IntervalTimerApp:
         if self.settings.get("sound_path"):
             self.sound_entry.insert(0, self.settings["sound_path"])
 
-    def fill_current_time(self):
-        now = datetime.datetime.now()
+    def set_time_fields(self, moment):
         self.hour_entry.delete(0, tk.END)
         self.minute_entry.delete(0, tk.END)
         self.second_entry.delete(0, tk.END)
-        self.hour_entry.insert(0, f"{now.hour:02}")
-        self.minute_entry.insert(0, f"{now.minute:02}")
-        self.second_entry.insert(0, f"{now.second:02}")
+        self.hour_entry.insert(0, f"{moment.hour:02}")
+        self.minute_entry.insert(0, f"{moment.minute:02}")
+        self.second_entry.insert(0, f"{moment.second:02}")
+
+    def fill_current_time(self):
+        self.set_time_fields(datetime.datetime.now())
+
+    @staticmethod
+    def closest_alarm_time(now, interval_min):
+        # Najblizsze zamkniecie swiecy (granice liczone od polnocy: dla 3 min 13:57, 14:00, 14:03...)
+        # pomniejszone o REACTION_SECONDS. Wynik jest zawsze co najmniej MIN_LEAD_SECONDS w przyszlosci,
+        # wiec gdy okno reakcji bierzacej swiecy juz minelo, wybieramy nastepna swiece.
+        interval = datetime.timedelta(minutes=interval_min)
+        reaction = datetime.timedelta(seconds=REACTION_SECONDS)
+        lead = datetime.timedelta(seconds=MIN_LEAD_SECONDS)
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # pierwszy numer granicy, dla ktorego (granica - reakcja) jest pozniej niz now + lead
+        n = (now - midnight + reaction + lead) // interval + 1
+        return midnight + n * interval - reaction
+
+    def closest_interval(self):
+        try:
+            interval_min = int(self.interval_entry.get())
+        except ValueError:
+            messagebox.showerror("Błąd", "Interwał musi być liczbą całkowitą (minuty).")
+            return
+        if interval_min < 1:
+            messagebox.showerror("Błąd", "Interwał musi wynosić co najmniej 1 minutę.")
+            return
+
+        # Wpisujemy wyliczona godzine i startujemy dokladnie tak, jak po kliknieciu Start
+        self.set_time_fields(self.closest_alarm_time(datetime.datetime.now(), interval_min))
+        self.start_timer()
 
     def browse_file(self):
         file_path = filedialog.askopenfilename(filetypes=[("Audio Files", "*.mp3 *.wav")])
@@ -176,18 +213,22 @@ class IntervalTimerApp:
         self.start_time = now.replace(hour=start_hour, minute=start_minute, second=start_second)
         if self.start_time < now:
             self.start_time += datetime.timedelta(days=1)
+        # Dzwiek na starcie tylko wtedy, gdy rzeczywiscie byla faza "Start za"
+        self.waiting_for_start = self.start_time > now
 
         self.running = True
         self.update_countdown()
 
     def stop_timer(self):
         self.running = False
+        self.waiting_for_start = False
         self.cancel_loop()
         self.message_until = None
         self.update_countdown_label_initial()
 
     def reset_timer(self):
         self.running = False
+        self.waiting_for_start = False
         self.cancel_loop()
         self.message_until = None
         self.start_time = None
@@ -217,6 +258,15 @@ class IntervalTimerApp:
             return
 
         elapsed = (now - self.start_time).total_seconds()
+
+        if self.waiting_for_start:
+            # "Start za" doszlo do zera: dzwiek na starcie (chyba ze program "przespal" caly interwal,
+            # wtedy zagra juz dzwiek konca interwalu ponizej, zeby nie bylo dwoch naraz)
+            self.waiting_for_start = False
+            if elapsed < self.interval_seconds:
+                self.countdown_label.config(text="Start odliczania!", foreground="green")
+                self.message_until = now + datetime.timedelta(seconds=MESSAGE_SECONDS)
+                self.play_sound()
 
         if elapsed >= self.interval_seconds:
             # Interwał minął: jeden dźwięk, nawet gdy program "przespał" kilka interwałów

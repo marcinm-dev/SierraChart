@@ -14,7 +14,7 @@ Custom studies for [Sierra Chart](https://www.sierrachart.com/) written in ACSIL
 
 | Tool | What it does | Latest version |
 |---|---|---|
-| [IntervalTimer](IntervalTimer/) | A small Python (tkinter) desktop timer: counts down a set interval, plays a sound at the end and repeats. Not a Sierra Chart study. | V2 (`intervaltimer-v2`) |
+| [IntervalTimer](IntervalTimer/) | A small Python (tkinter) desktop timer: counts down a set interval, plays a sound at the end and repeats. Not a Sierra Chart study. | V3 (`intervaltimer-v3`) |
 
 ## Building a study
 
