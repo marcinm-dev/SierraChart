@@ -1,12 +1,20 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from playsound import playsound
 import datetime
-import platform
-import os
 import json
+import math
+import os
+import threading
+from pathlib import Path
 
-SETTINGS_FILE = "timer_settings.json"
+# Plik ustawien lezy obok skryptu, niezaleznie od katalogu, z ktorego program uruchomiono
+SETTINGS_FILE = Path(__file__).resolve().parent / "timer_settings.json"
+
+# Co ile milisekund sprawdzamy czas (maly koszt, a alarm spoznia sie najwyzej o ten czas)
+TICK_MS = 200
+# Jak dlugo (w sekundach) zostaje na ekranie komunikat o koncu interwalu
+MESSAGE_SECONDS = 2
+
 
 class IntervalTimerApp:
     def __init__(self, root):
@@ -19,6 +27,8 @@ class IntervalTimerApp:
         self.interval_seconds = 0
         self.start_time = None
         self.sound_path = ""
+        self.after_id = None        # id zaplanowanego tiku, zeby moc go anulowac
+        self.message_until = None   # do kiedy pokazujemy komunikat o koncu interwalu
 
         self.load_settings()
 
@@ -56,14 +66,14 @@ class IntervalTimerApp:
         sound_frame = ttk.Frame(self.root)
         sound_frame.grid(row=2, column=1, sticky="w", padx=5, pady=5)
         self.sound_entry = ttk.Entry(sound_frame, width=25)
-        self.sound_entry.grid(row=0, column=0, padx=(0,5))
+        self.sound_entry.grid(row=0, column=0, padx=(0, 5))
         ttk.Button(sound_frame, text="Wybierz plik", command=self.browse_file).grid(row=0, column=1)
 
         # Etykieta odliczania
         self.countdown_label = ttk.Label(self.root, text="Pozostały czas: --:--", font=("Segoe UI", 16))
         self.countdown_label.grid(row=3, column=0, columnspan=3, pady=20)
 
-        # Przyciski Start / Stop / Reset / Ustawienia
+        # Przyciski Start / Stop / Reset
         button_frame = ttk.Frame(self.root)
         button_frame.grid(row=4, column=0, columnspan=3, pady=10)
 
@@ -74,19 +84,16 @@ class IntervalTimerApp:
         self.stop_button.grid(row=0, column=1, padx=10)
 
         self.reset_button = ttk.Button(button_frame, text="Reset", command=self.reset_timer)
-        self.reset_button.grid(row=1, column=0, padx=10, pady=5)
-
-        self.settings_button = ttk.Button(button_frame, text="Ustawienia", command=self.edit_settings)
-        self.settings_button.grid(row=1, column=1, padx=10, pady=5)
+        self.reset_button.grid(row=0, column=2, padx=10)
 
         # Wczytaj wartości z ustawień do UI
         if self.settings.get("start_time"):
             try:
-                h, m, s = map(int, self.settings["start_time"].split(":"))
+                h, m, s = map(int, str(self.settings["start_time"]).split(":"))
                 self.hour_entry.insert(0, f"{h:02}")
                 self.minute_entry.insert(0, f"{m:02}")
                 self.second_entry.insert(0, f"{s:02}")
-            except:
+            except ValueError:
                 pass
         if self.settings.get("interval"):
             self.interval_entry.insert(0, str(self.settings["interval"]))
@@ -108,27 +115,35 @@ class IntervalTimerApp:
             self.sound_entry.delete(0, tk.END)
             self.sound_entry.insert(0, file_path)
 
-    def save_settings(self):
-        start_time_str = f"{int(self.hour_entry.get()):02}:{int(self.minute_entry.get()):02}:{int(self.second_entry.get()):02}"
-        interval = int(self.interval_entry.get())
-        sound_path = self.sound_entry.get()
+    def save_settings(self, start_hour, start_minute, start_second, interval_min, sound_path):
         self.settings = {
-            "start_time": start_time_str,
-            "interval": interval,
+            "start_time": f"{start_hour:02}:{start_minute:02}:{start_second:02}",
+            "interval": interval_min,
             "sound_path": sound_path
         }
-        with open(SETTINGS_FILE, "w") as f:
-            json.dump(self.settings, f)
+        try:
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.settings, f)
+        except OSError as e:
+            # Brak zapisu ustawien nie moze blokowac timera
+            print("Nie udało się zapisać ustawień:", e)
 
     def load_settings(self):
-        if os.path.exists(SETTINGS_FILE):
-            with open(SETTINGS_FILE, "r") as f:
-                self.settings = json.load(f)
-        else:
-            self.settings = {}
+        self.settings = {}
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                self.settings = data
+        except (OSError, ValueError):
+            # Brak pliku albo uszkodzony JSON: start z pustymi ustawieniami
+            pass
 
-    def edit_settings(self):
-        messagebox.showinfo("Ustawienia", "W tej wersji ustawienia edytujesz bezpośrednio w polach i zapisujesz przy rozpoczęciu timera.")
+    def cancel_loop(self):
+        # Anuluje zaplanowany tik, dzieki czemu nigdy nie dziala wiecej niz jedna petla odliczania
+        if self.after_id is not None:
+            self.root.after_cancel(self.after_id)
+            self.after_id = None
 
     def start_timer(self):
         try:
@@ -136,16 +151,29 @@ class IntervalTimerApp:
             start_minute = int(self.minute_entry.get())
             start_second = int(self.second_entry.get())
             interval_min = int(self.interval_entry.get())
-            self.sound_path = self.sound_entry.get()
-        except Exception as e:
-            messagebox.showerror("Błąd", f"Nieprawidłowe dane wejściowe: {e}")
+        except ValueError:
+            messagebox.showerror("Błąd", "Godzina, minuta, sekunda i interwał muszą być liczbami całkowitymi.")
             return
 
-        self.save_settings()
+        if not (0 <= start_hour <= 23 and 0 <= start_minute <= 59 and 0 <= start_second <= 59):
+            messagebox.showerror("Błąd", "Godzina musi być w zakresie od 00:00:00 do 23:59:59.")
+            return
+        if interval_min < 1:
+            messagebox.showerror("Błąd", "Interwał musi wynosić co najmniej 1 minutę.")
+            return
+
+        self.sound_path = self.sound_entry.get()
+        self.save_settings(start_hour, start_minute, start_second, interval_min, self.sound_path)
+
+        # Ponowny Start zastepuje poprzednie odliczanie zamiast uruchamiac drugie
+        self.cancel_loop()
+        self.message_until = None
 
         self.interval_seconds = interval_min * 60
-        now = datetime.datetime.now()
-        self.start_time = now.replace(hour=start_hour, minute=start_minute, second=start_second, microsecond=0)
+        # Porownujemy z dokladnoscia do sekundy: godzina wpisana przyciskiem "Obecny czas"
+        # ma byc traktowana jako "teraz", a nie jako godzina, ktora juz minela
+        now = datetime.datetime.now().replace(microsecond=0)
+        self.start_time = now.replace(hour=start_hour, minute=start_minute, second=start_second)
         if self.start_time < now:
             self.start_time += datetime.timedelta(days=1)
 
@@ -154,10 +182,14 @@ class IntervalTimerApp:
 
     def stop_timer(self):
         self.running = False
+        self.cancel_loop()
+        self.message_until = None
         self.update_countdown_label_initial()
 
     def reset_timer(self):
         self.running = False
+        self.cancel_loop()
+        self.message_until = None
         self.start_time = None
         self.interval_seconds = 0
         self.countdown_label.config(text="Pozostały czas: --:--", foreground="black")
@@ -167,10 +199,11 @@ class IntervalTimerApp:
         try:
             interval_min = int(self.interval_entry.get())
             self.countdown_label.config(text=f"Pozostały czas: {interval_min:02}:00", foreground="blue")
-        except:
+        except ValueError:
             self.countdown_label.config(text="Pozostały czas: --:--", foreground="black")
 
     def update_countdown(self):
+        self.after_id = None
         if not self.running:
             return
 
@@ -178,38 +211,46 @@ class IntervalTimerApp:
         if now < self.start_time:
             # jeszcze nie czas rozpocząć odliczania - wyświetl czas do startu
             diff = (self.start_time - now).total_seconds()
-            mins, secs = divmod(int(diff), 60)
+            mins, secs = divmod(math.ceil(diff), 60)
             self.countdown_label.config(text=f"Start za: {mins:02}:{secs:02}", foreground="blue")
-            self.root.after(1000, self.update_countdown)
+            self.after_id = self.root.after(TICK_MS, self.update_countdown)
             return
 
         elapsed = (now - self.start_time).total_seconds()
-        remaining = self.interval_seconds - elapsed
 
-        if remaining <= 0:
-            self.countdown_label.config(text="Minęły 3 minuty!", foreground="green")
+        if elapsed >= self.interval_seconds:
+            # Interwał minął: jeden dźwięk, nawet gdy program "przespał" kilka interwałów
+            # (uśpiony komputer); start_time przesuwamy o wszystkie pełne interwały naraz
+            minutes = self.interval_seconds // 60
+            missed = int(elapsed // self.interval_seconds)
+            self.start_time += datetime.timedelta(seconds=missed * self.interval_seconds)
+            self.countdown_label.config(text=f"Minął interwał: {minutes} min!", foreground="green")
+            self.message_until = now + datetime.timedelta(seconds=MESSAGE_SECONDS)
             self.play_sound()
-            # Restartujemy odliczanie (start_time przesuwamy o interwał)
-            self.start_time = self.start_time + datetime.timedelta(seconds=self.interval_seconds)
-            self.root.after(1000, self.update_countdown)
-            return
+        elif self.message_until is None or now >= self.message_until:
+            self.message_until = None
+            remaining = self.interval_seconds - elapsed
+            mins, secs = divmod(math.ceil(remaining), 60)
+            self.countdown_label.config(text=f"Pozostały czas: {mins:02}:{secs:02}", foreground="green")
 
-        mins, secs = divmod(int(remaining), 60)
-        self.countdown_label.config(text=f"Pozostały czas: {mins:02}:{secs:02}", foreground="green")
-
-        # Sprawdzaj co 1 sekundę, można ustawić np. 15000 ms (15 sekund) jeśli chcesz mniejsze obciążenie
-        self.root.after(1000, self.update_countdown)
+        self.after_id = self.root.after(TICK_MS, self.update_countdown)
 
     def play_sound(self):
         if self.sound_path and os.path.exists(self.sound_path):
-            try:
-                # playsound jest blokujący, więc uruchomimy w tle wątku
-                import threading
-                threading.Thread(target=playsound, args=(self.sound_path,), daemon=True).start()
-            except Exception as e:
-                print("Błąd odtwarzania dźwięku:", e)
+            # playsound jest blokujący, więc odtwarzamy w osobnym wątku
+            threading.Thread(target=self.play_sound_in_background, args=(self.sound_path,), daemon=True).start()
         else:
             print("Dźwięk nie jest ustawiony lub plik nie istnieje.")
+
+    @staticmethod
+    def play_sound_in_background(path):
+        # Import tutaj: brak pakietu playsound nie wylacza calego programu, tylko dzwiek
+        try:
+            from playsound import playsound
+            playsound(path)
+        except Exception as e:
+            print("Błąd odtwarzania dźwięku:", e)
+
 
 if __name__ == "__main__":
     root = tk.Tk()
