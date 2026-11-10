@@ -59,7 +59,9 @@ class IntervalTimerApp:
         ttk.Label(time_frame, text=":").grid(row=0, column=3)
         self.second_entry = ttk.Entry(time_frame, width=3)
         self.second_entry.grid(row=0, column=4)
-        ttk.Button(time_frame, text="Obecny czas", command=self.fill_current_time).grid(row=0, column=5, padx=10)
+        ttk.Button(time_frame, text="Obecny czas", command=self.fill_current_time).grid(row=0, column=5, padx=(10, 0))
+        self.closest_button = ttk.Button(time_frame, text="ClosestInterval", command=self.closest_interval)
+        self.closest_button.grid(row=0, column=6, padx=(5, 0))
 
         # Interwał (minuty)
         ttk.Label(self.root, text="Interwał (minuty):").grid(row=1, column=0, sticky="e", padx=5, pady=5)
@@ -90,9 +92,6 @@ class IntervalTimerApp:
 
         self.reset_button = ttk.Button(button_frame, text="Reset", command=self.reset_timer)
         self.reset_button.grid(row=0, column=2, padx=10)
-
-        self.closest_button = ttk.Button(button_frame, text="ClosestInterval", command=self.closest_interval)
-        self.closest_button.grid(row=0, column=3, padx=10)
 
         # Wczytaj wartości z ustawień do UI
         if self.settings.get("start_time"):
