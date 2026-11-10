@@ -92,14 +92,10 @@ class IntervalTimerApp:
         self.closest_button = ttk.Button(time_frame, text="ClosestInterval", command=self.closest_interval)
         self.closest_button.grid(row=0, column=6, padx=(5, 0))
 
-        # Interval (minutes) + SAVE (saves the interval and the sound file to the settings file)
+        # Interval (minutes)
         ttk.Label(self.root, text="Interval (minutes):").grid(row=1, column=0, sticky="e", padx=5, pady=5)
-        interval_frame = ttk.Frame(self.root)
-        interval_frame.grid(row=1, column=1, sticky="w", padx=5, pady=5)
-        self.interval_entry = ttk.Entry(interval_frame, width=10)
-        self.interval_entry.grid(row=0, column=0)
-        self.save_button = ttk.Button(interval_frame, text="SAVE", command=self.save_clicked)
-        self.save_button.grid(row=0, column=1, padx=(10, 0))
+        self.interval_entry = ttk.Entry(self.root, width=10)
+        self.interval_entry.grid(row=1, column=1, sticky="w", padx=5, pady=5)
 
         # Sound (optional; the system beep is used when it is empty)
         ttk.Label(self.root, text="Sound (optional):").grid(row=2, column=0, sticky="e", padx=5, pady=5)
@@ -113,18 +109,22 @@ class IntervalTimerApp:
         self.countdown_label = ttk.Label(self.root, text="Time left: --:--", font=("Segoe UI", 16))
         self.countdown_label.grid(row=3, column=0, columnspan=2, pady=20)
 
-        # Start / Stop buttons: two equal columns across the width of the form, so the buttons sit
-        # symmetrically (at 1/4 and 3/4 of the width) around the countdown label
+        # Start / Stop / SAVE buttons: three equal columns across the width of the form, so the buttons
+        # are spread evenly and Stop sits exactly under the countdown label.
+        # SAVE writes the interval and the sound file to the settings file.
         button_frame = ttk.Frame(self.root)
         button_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=10)
-        button_frame.columnconfigure(0, weight=1, uniform="buttons")
-        button_frame.columnconfigure(1, weight=1, uniform="buttons")
+        for column in range(3):
+            button_frame.columnconfigure(column, weight=1, uniform="buttons")
 
         self.start_button = ttk.Button(button_frame, text="Start", command=self.start_timer)
         self.start_button.grid(row=0, column=0)
 
         self.stop_button = ttk.Button(button_frame, text="Stop", command=self.stop_timer)
         self.stop_button.grid(row=0, column=1)
+
+        self.save_button = ttk.Button(button_frame, text="SAVE", command=self.save_clicked)
+        self.save_button.grid(row=0, column=2)
 
         # Load the saved interval and sound file into the fields (the start time is never saved)
         if self.settings.get("interval"):
