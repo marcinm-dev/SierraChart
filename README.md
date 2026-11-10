@@ -10,6 +10,12 @@ Custom studies for [Sierra Chart](https://www.sierrachart.com/) written in ACSIL
 | [D1BarReplay](D1BarReplay/) | Lets daily and higher-timeframe historical charts show the state of a trading day as of any moment of a Bar Replay. Works on chart data in memory only. | V1 (`d1barreplay-v1`) |
 | [DMA3x3](DMA3x3/) | Displaced Moving Average 3x3 (SMA of the last 3 closes shifted forward by 3 bars) with a Control Bar show/hide button. | V2 (`dma3x3-v2`) |
 
+## Other tools
+
+| Tool | What it does | Latest version |
+|---|---|---|
+| [IntervalTimer](IntervalTimer/) | A small Python (tkinter) desktop timer: counts down a set interval, plays a sound at the end and repeats. Not a Sierra Chart study. | V1 (`intervaltimer-v1`) |
+
 ## Building a study
 
 1. Copy the study's `.cpp` file into your Sierra Chart `ACS_Source` folder.
