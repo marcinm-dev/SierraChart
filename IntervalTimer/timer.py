@@ -1,11 +1,16 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+import ctypes
 import datetime
+import itertools
 import json
 import math
 import os
 import threading
 from pathlib import Path
+
+# Licznik do unikalnych aliasow MCI (kazde odtworzenie dostaje wlasny)
+SOUND_COUNTER = itertools.count(1)
 
 # Plik ustawien lezy obok skryptu, niezaleznie od katalogu, z ktorego program uruchomiono
 SETTINGS_FILE = Path(__file__).resolve().parent / "timer_settings.json"
@@ -286,17 +291,36 @@ class IntervalTimerApp:
 
     def play_sound(self):
         if self.sound_path and os.path.exists(self.sound_path):
-            # playsound jest blokujący, więc odtwarzamy w osobnym wątku
+            # odtwarzanie czeka na koniec dźwięku, więc działa w osobnym wątku
             threading.Thread(target=self.play_sound_in_background, args=(self.sound_path,), daemon=True).start()
         else:
             print("Dźwięk nie jest ustawiony lub plik nie istnieje.")
 
     @staticmethod
     def play_sound_in_background(path):
-        # Import tutaj: brak pakietu playsound nie wylacza calego programu, tylko dzwiek
+        # Odtwarzanie przez systemowe MCI (winmm.dll): bez zewnetrznych pakietow, dziala dla mp3 i wav
         try:
-            from playsound import playsound
-            playsound(path)
+            winmm = ctypes.windll.winmm
+        except AttributeError:
+            print("Odtwarzanie dźwięku jest obsługiwane tylko w systemie Windows.")
+            return
+
+        def mci(command):
+            error = winmm.mciSendStringW(command, None, 0, None)
+            if error:
+                buffer = ctypes.create_unicode_buffer(256)
+                winmm.mciGetErrorStringW(error, buffer, 256)
+                raise RuntimeError(buffer.value or f"kod błędu MCI {error}")
+
+        # Unikalny alias na kazde odtworzenie, zeby dwa dzwieki naraz sie nie myly
+        alias = f"timer_sound_{next(SOUND_COUNTER)}"
+        device = "waveaudio" if path.lower().endswith(".wav") else "mpegvideo"
+        try:
+            mci(f'open "{os.path.normpath(path)}" type {device} alias {alias}')
+            try:
+                mci(f"play {alias} wait")
+            finally:
+                winmm.mciSendStringW(f"close {alias}", None, 0, None)
         except Exception as e:
             print("Błąd odtwarzania dźwięku:", e)
 
