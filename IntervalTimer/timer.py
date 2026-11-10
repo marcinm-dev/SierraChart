@@ -16,7 +16,7 @@ except ImportError:
     winsound = None
 
 # The settings file lives next to the script, whatever directory the program is started from.
-# It holds only the interval and the path of the sound file (written by the SAVE button).
+# It holds only the interval and the path of the sound file (written by the Save button).
 SETTINGS_FILE = Path(__file__).resolve().parent / "timer_settings.json"
 
 # How often (in milliseconds) the time is checked; the alarm is late by at most this much
@@ -29,7 +29,7 @@ REACTION_SECONDS = 20
 MIN_LEAD_SECONDS = 1
 # Longest accepted interval (one day); a larger value is almost certainly a typing mistake
 MAX_INTERVAL_MINUTES = 1440
-# How long (in milliseconds) the SAVE button shows "Saved!"
+# How long (in milliseconds) the Save button shows "Saved!"
 SAVED_FEEDBACK_MS = 1500
 # Fallback beep used when the sound file is missing or cannot be played
 FALLBACK_BEEP_HZ = 1000
@@ -37,6 +37,21 @@ FALLBACK_BEEP_MS = 500
 
 # Counter for unique MCI aliases (every playback gets its own)
 SOUND_COUNTER = itertools.count(1)
+
+# Look of the window (a flat, light theme)
+UI_FONT = "Segoe UI"
+MIN_WINDOW_WIDTH = 560
+COLOR_BG = "#f4f6f9"
+COLOR_TEXT = "#1f2937"
+COLOR_MUTED = "#6b7280"          # idle / no countdown
+COLOR_BORDER = "#cbd5e1"
+COLOR_BUTTON = "#e5e9f0"
+COLOR_BUTTON_HOVER = "#d6dde8"
+COLOR_BUTTON_PRESSED = "#c5cedc"
+COLOR_ACCENT = "#2563eb"         # Start button, focus border, "waiting" text
+COLOR_ACCENT_HOVER = "#1d4ed8"
+COLOR_ACCENT_PRESSED = "#1e40af"
+COLOR_RUNNING = "#16a34a"        # countdown in progress
 
 
 def format_hms(total_seconds):
@@ -53,8 +68,6 @@ class IntervalTimerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Interval Timer")
-        self.root.geometry("520x300")
-        self.root.configure(bg="#f0f2f5")
 
         self.running = False
         self.interval_seconds = 0
@@ -69,62 +82,101 @@ class IntervalTimerApp:
         self.build_ui()
         self.update_countdown_label_initial()
 
-    def build_ui(self):
+    def setup_style(self):
+        # The "clam" theme is flat and can be recoloured; the default Windows theme cannot
         style = ttk.Style()
-        style.configure("TLabel", background="#f0f2f5", font=("Segoe UI", 10))
-        style.configure("TButton", font=("Segoe UI", 10), padding=6)
-        style.configure("TEntry", font=("Segoe UI", 10))
+        style.theme_use("clam")
+        self.root.configure(bg=COLOR_BG)
+        font = (UI_FONT, 10)
+
+        style.configure(".", background=COLOR_BG, foreground=COLOR_TEXT, font=font)
+        style.configure("TFrame", background=COLOR_BG)
+        style.configure("TLabel", background=COLOR_BG, foreground=COLOR_TEXT, font=font)
+        style.configure("Countdown.TLabel", font=(UI_FONT, 34, "bold"))
+
+        # Entries: white field, thin grey border that turns blue when the field has the focus
+        style.configure("TEntry", fieldbackground="white", foreground=COLOR_TEXT, insertcolor=COLOR_TEXT,
+                        bordercolor=COLOR_BORDER, lightcolor=COLOR_BORDER, darkcolor=COLOR_BORDER,
+                        padding=(5, 5))
+        style.map("TEntry", bordercolor=[("focus", COLOR_ACCENT)], lightcolor=[("focus", COLOR_ACCENT)],
+                  darkcolor=[("focus", COLOR_ACCENT)])
+
+        # Flat buttons without 3D edges: a normal one and a blue accent one (Start)
+        for name, base, hover, pressed, text in (
+                ("TButton", COLOR_BUTTON, COLOR_BUTTON_HOVER, COLOR_BUTTON_PRESSED, COLOR_TEXT),
+                ("Accent.TButton", COLOR_ACCENT, COLOR_ACCENT_HOVER, COLOR_ACCENT_PRESSED, "white")):
+            style.configure(name, background=base, foreground=text, font=font, padding=(14, 7), relief="flat",
+                            bordercolor=base, lightcolor=base, darkcolor=base, focuscolor=base)
+            colors = [("pressed", pressed), ("active", hover)]
+            style.map(name, background=colors, bordercolor=colors, lightcolor=colors, darkcolor=colors)
+
+    def build_ui(self):
+        self.setup_style()
+
+        # Everything sits in one frame that is centred in the window
+        self.root.columnconfigure(0, weight=1)
+        content = ttk.Frame(self.root, padding=(24, 18, 24, 18))
+        content.grid(row=0, column=0)
+
+        entry_font = (UI_FONT, 10)
 
         # Start time: HH:MM:SS + buttons that fill it in
-        ttk.Label(self.root, text="Start time:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
-        time_frame = ttk.Frame(self.root)
+        ttk.Label(content, text="Start time:").grid(row=0, column=0, sticky="e", padx=(0, 12), pady=7)
+        time_frame = ttk.Frame(content)
         time_frame.grid(row=0, column=1, sticky="w")
 
-        self.hour_entry = ttk.Entry(time_frame, width=3)
+        self.hour_entry = ttk.Entry(time_frame, width=3, justify="center", font=entry_font)
         self.hour_entry.grid(row=0, column=0)
-        ttk.Label(time_frame, text=":").grid(row=0, column=1)
-        self.minute_entry = ttk.Entry(time_frame, width=3)
+        ttk.Label(time_frame, text=":").grid(row=0, column=1, padx=2)
+        self.minute_entry = ttk.Entry(time_frame, width=3, justify="center", font=entry_font)
         self.minute_entry.grid(row=0, column=2)
-        ttk.Label(time_frame, text=":").grid(row=0, column=3)
-        self.second_entry = ttk.Entry(time_frame, width=3)
+        ttk.Label(time_frame, text=":").grid(row=0, column=3, padx=2)
+        self.second_entry = ttk.Entry(time_frame, width=3, justify="center", font=entry_font)
         self.second_entry.grid(row=0, column=4)
-        ttk.Button(time_frame, text="Current time", command=self.fill_current_time).grid(row=0, column=5, padx=(10, 0))
+        ttk.Button(time_frame, text="Current time", command=self.fill_current_time).grid(row=0, column=5, padx=(14, 0))
         self.closest_button = ttk.Button(time_frame, text="ClosestInterval", command=self.closest_interval)
-        self.closest_button.grid(row=0, column=6, padx=(5, 0))
+        self.closest_button.grid(row=0, column=6, padx=(6, 0))
 
         # Interval (minutes)
-        ttk.Label(self.root, text="Interval (minutes):").grid(row=1, column=0, sticky="e", padx=5, pady=5)
-        self.interval_entry = ttk.Entry(self.root, width=10)
-        self.interval_entry.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        ttk.Label(content, text="Interval (minutes):").grid(row=1, column=0, sticky="e", padx=(0, 12), pady=7)
+        self.interval_entry = ttk.Entry(content, width=8, justify="center", font=entry_font)
+        self.interval_entry.grid(row=1, column=1, sticky="w")
 
         # Sound (optional; the system beep is used when it is empty)
-        ttk.Label(self.root, text="Sound (optional):").grid(row=2, column=0, sticky="e", padx=5, pady=5)
-        sound_frame = ttk.Frame(self.root)
-        sound_frame.grid(row=2, column=1, sticky="w", padx=5, pady=5)
-        self.sound_entry = ttk.Entry(sound_frame, width=25)
-        self.sound_entry.grid(row=0, column=0, padx=(0, 5))
+        ttk.Label(content, text="Sound (optional):").grid(row=2, column=0, sticky="e", padx=(0, 12), pady=7)
+        sound_frame = ttk.Frame(content)
+        sound_frame.grid(row=2, column=1, sticky="w")
+        self.sound_entry = ttk.Entry(sound_frame, width=30, font=entry_font)
+        self.sound_entry.grid(row=0, column=0, padx=(0, 6))
         ttk.Button(sound_frame, text="Browse...", command=self.browse_file).grid(row=0, column=1)
 
         # Countdown label (spans the form, so it is centred under it)
-        self.countdown_label = ttk.Label(self.root, text="Time left: --:--", font=("Segoe UI", 16))
-        self.countdown_label.grid(row=3, column=0, columnspan=2, pady=20)
+        self.countdown_label = ttk.Label(content, text="Time left: --:--", style="Countdown.TLabel")
+        self.countdown_label.grid(row=3, column=0, columnspan=2, pady=(22, 18))
 
-        # Start / Stop / SAVE buttons: three equal columns across the width of the form, so the buttons
+        # Start / Stop / Save buttons: three equal columns across the width of the form, so the buttons
         # are spread evenly and Stop sits exactly under the countdown label.
-        # SAVE writes the interval and the sound file to the settings file.
-        button_frame = ttk.Frame(self.root)
-        button_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=10)
+        # Save writes the interval and the sound file to the settings file.
+        button_frame = ttk.Frame(content)
+        button_frame.grid(row=4, column=0, columnspan=2, sticky="ew")
         for column in range(3):
             button_frame.columnconfigure(column, weight=1, uniform="buttons")
 
-        self.start_button = ttk.Button(button_frame, text="Start", command=self.start_timer)
+        self.start_button = ttk.Button(button_frame, text="Start", width=10, style="Accent.TButton",
+                                       command=self.start_timer)
         self.start_button.grid(row=0, column=0)
 
-        self.stop_button = ttk.Button(button_frame, text="Stop", command=self.stop_timer)
+        self.stop_button = ttk.Button(button_frame, text="Stop", width=10, command=self.stop_timer)
         self.stop_button.grid(row=0, column=1)
 
-        self.save_button = ttk.Button(button_frame, text="SAVE", command=self.save_clicked)
+        self.save_button = ttk.Button(button_frame, text="Save", width=10, command=self.save_clicked)
         self.save_button.grid(row=0, column=2)
+
+        # Size the window to its content (never smaller), a little wider than the form for air
+        self.root.update_idletasks()
+        needed_width, needed_height = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
+        self.root.minsize(needed_width, needed_height)
+        self.root.geometry(f"{max(needed_width, MIN_WINDOW_WIDTH)}x{needed_height}")
 
         # Load the saved interval and sound file into the fields (the start time is never saved)
         if self.settings.get("interval"):
@@ -204,7 +256,7 @@ class IntervalTimerApp:
         if self.save_settings(interval_min, self.sound_entry.get().strip()):
             # Short confirmation on the button itself (no extra window to click away)
             self.save_button.config(text="Saved!")
-            self.root.after(SAVED_FEEDBACK_MS, lambda: self.save_button.config(text="SAVE"))
+            self.root.after(SAVED_FEEDBACK_MS, lambda: self.save_button.config(text="Save"))
         else:
             messagebox.showerror("Error", f"Could not write the settings file:\n{SETTINGS_FILE}")
 
@@ -290,9 +342,9 @@ class IntervalTimerApp:
         # Show the interval before the start, in blue
         try:
             interval_min = int(self.interval_entry.get())
-            self.countdown_label.config(text=f"Time left: {format_hms(interval_min * 60)}", foreground="blue")
+            self.countdown_label.config(text=f"Time left: {format_hms(interval_min * 60)}", foreground=COLOR_ACCENT)
         except ValueError:
-            self.countdown_label.config(text="Time left: --:--", foreground="black")
+            self.countdown_label.config(text="Time left: --:--", foreground=COLOR_MUTED)
 
     def update_countdown(self):
         self.after_id = None
@@ -313,7 +365,7 @@ class IntervalTimerApp:
         if now < self.start_time:
             # The countdown has not started yet: show the time left until the start
             diff = (self.start_time - now).total_seconds()
-            self.countdown_label.config(text=f"Start in: {format_hms(math.ceil(diff))}", foreground="blue")
+            self.countdown_label.config(text=f"Start in: {format_hms(math.ceil(diff))}", foreground=COLOR_ACCENT)
             return
 
         elapsed = (now - self.start_time).total_seconds()
@@ -323,7 +375,7 @@ class IntervalTimerApp:
             # interval, then the interval-end sound below plays, so two sounds never overlap)
             self.waiting_for_start = False
             if elapsed < self.interval_seconds:
-                self.countdown_label.config(text="Countdown started!", foreground="green")
+                self.countdown_label.config(text="Countdown started!", foreground=COLOR_RUNNING)
                 self.message_until = now + datetime.timedelta(seconds=MESSAGE_SECONDS)
                 self.play_sound()
 
@@ -333,13 +385,13 @@ class IntervalTimerApp:
             minutes = self.interval_seconds // 60
             missed = int(elapsed // self.interval_seconds)
             self.start_time += datetime.timedelta(seconds=missed * self.interval_seconds)
-            self.countdown_label.config(text=f"Interval elapsed: {minutes} min!", foreground="green")
+            self.countdown_label.config(text=f"Interval elapsed: {minutes} min!", foreground=COLOR_RUNNING)
             self.message_until = now + datetime.timedelta(seconds=MESSAGE_SECONDS)
             self.play_sound()
         elif self.message_until is None or now >= self.message_until:
             self.message_until = None
             remaining = self.interval_seconds - elapsed
-            self.countdown_label.config(text=f"Time left: {format_hms(math.ceil(remaining))}", foreground="green")
+            self.countdown_label.config(text=f"Time left: {format_hms(math.ceil(remaining))}", foreground=COLOR_RUNNING)
 
     def play_sound(self):
         # The timer is never silent: without a playable file the system beep is used instead
