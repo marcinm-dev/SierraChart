@@ -89,22 +89,22 @@ class IntervalTimerApp:
         self.sound_entry.grid(row=0, column=0, padx=(0, 5))
         ttk.Button(sound_frame, text="Browse...", command=self.browse_file).grid(row=0, column=1)
 
-        # Countdown label
+        # Countdown label (spans the form, so it is centred under it)
         self.countdown_label = ttk.Label(self.root, text="Time left: --:--", font=("Segoe UI", 16))
-        self.countdown_label.grid(row=3, column=0, columnspan=3, pady=20)
+        self.countdown_label.grid(row=3, column=0, columnspan=2, pady=20)
 
-        # Start / Stop / Reset buttons
+        # Start / Stop buttons: two equal columns across the width of the form, so the buttons sit
+        # symmetrically (at 1/4 and 3/4 of the width) around the countdown label
         button_frame = ttk.Frame(self.root)
-        button_frame.grid(row=4, column=0, columnspan=3, pady=10)
+        button_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=10)
+        button_frame.columnconfigure(0, weight=1, uniform="buttons")
+        button_frame.columnconfigure(1, weight=1, uniform="buttons")
 
         self.start_button = ttk.Button(button_frame, text="Start", command=self.start_timer)
-        self.start_button.grid(row=0, column=0, padx=10)
+        self.start_button.grid(row=0, column=0)
 
         self.stop_button = ttk.Button(button_frame, text="Stop", command=self.stop_timer)
-        self.stop_button.grid(row=0, column=1, padx=10)
-
-        self.reset_button = ttk.Button(button_frame, text="Reset", command=self.reset_timer)
-        self.reset_button.grid(row=0, column=2, padx=10)
+        self.stop_button.grid(row=0, column=1)
 
         # Load the saved values into the fields
         if self.settings.get("start_time"):
@@ -248,15 +248,6 @@ class IntervalTimerApp:
         self.cancel_loop()
         self.message_until = None
         self.update_countdown_label_initial()
-
-    def reset_timer(self):
-        self.running = False
-        self.waiting_for_start = False
-        self.cancel_loop()
-        self.message_until = None
-        self.start_time = None
-        self.interval_seconds = 0
-        self.countdown_label.config(text="Time left: --:--", foreground="black")
 
     def update_countdown_label_initial(self):
         # Show the interval before the start, in blue
