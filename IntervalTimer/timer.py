@@ -23,9 +23,9 @@ SETTINGS_FILE = Path(__file__).resolve().parent / "timer_settings.json"
 TICK_MS = 200
 # How long (in seconds) the "interval elapsed" / "countdown started" message stays on screen
 MESSAGE_SECONDS = 2
-# How many seconds before a candle close the ClosestInterval alarm rings (time to react)
+# How many seconds before a candle close the IntervalTime alarm rings (time to react)
 REACTION_SECONDS = 20
-# Minimum lead (in seconds) between the ClosestInterval click and the calculated start
+# Minimum lead (in seconds) between the IntervalTime click and the calculated start
 MIN_LEAD_SECONDS = 1
 # Longest accepted interval (one day); a larger value is almost certainly a typing mistake
 MAX_INTERVAL_MINUTES = 1440
@@ -135,7 +135,7 @@ class IntervalTimerApp:
         self.second_entry = ttk.Entry(time_frame, width=3, justify="center", font=entry_font)
         self.second_entry.grid(row=0, column=4)
         ttk.Button(time_frame, text="Current time", command=self.fill_current_time).grid(row=0, column=5, padx=(14, 0))
-        self.closest_button = ttk.Button(time_frame, text="ClosestInterval", command=self.closest_interval)
+        self.closest_button = ttk.Button(time_frame, text="IntervalTime", command=self.closest_interval)
         self.closest_button.grid(row=0, column=6, padx=(6, 0))
 
         # Interval (minutes)
@@ -287,7 +287,7 @@ class IntervalTimerApp:
             messagebox.showerror(
                 "Error",
                 "The start time (hour, minute, second) must be whole numbers.\n"
-                "Use \"Current time\" or \"ClosestInterval\" to fill it in.")
+                "Use \"Current time\" or \"IntervalTime\" to fill it in.")
             return
         if not (0 <= start_hour <= 23 and 0 <= start_minute <= 59 and 0 <= start_second <= 59):
             messagebox.showerror("Error", "The start time must be between 00:00:00 and 23:59:59.")
