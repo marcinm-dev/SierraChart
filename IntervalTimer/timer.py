@@ -6,6 +6,7 @@ import itertools
 import json
 import math
 import os
+import sys
 import threading
 import traceback
 from pathlib import Path
@@ -15,9 +16,19 @@ try:
 except ImportError:
     winsound = None
 
-# The settings file lives next to the script, whatever directory the program is started from.
+
+def app_folder():
+    # Folder of the program. Built as an .exe (PyInstaller sets sys.frozen) the script lives in a
+    # temporary folder that is deleted on exit, so the folder of the .exe is used instead; otherwise
+    # it is the folder of this script.
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+# The settings file lives next to the program, whatever directory it is started from.
 # It holds only the interval and the path of the sound file (written by the Save button).
-SETTINGS_FILE = Path(__file__).resolve().parent / "timer_settings.json"
+SETTINGS_FILE = app_folder() / "timer_settings.json"
 
 # How often (in milliseconds) the time is checked; the alarm is late by at most this much
 TICK_MS = 200
@@ -53,6 +64,10 @@ COLOR_ACCENT = "#2563eb"         # Start button, focus border, "waiting" text
 COLOR_ACCENT_HOVER = "#1d4ed8"
 COLOR_ACCENT_PRESSED = "#1e40af"
 COLOR_RUNNING = "#16a34a"        # countdown in progress
+COLOR_WARNING = "#b45309"        # the sound problem line under the buttons
+
+# Texts of the sound problem line (shown in the window, so they also work without a console)
+SOUND_MISSING_MESSAGE = "Sound file not found - the system beep is used instead."
 
 
 def format_hms(total_seconds):
@@ -77,6 +92,9 @@ class IntervalTimerApp:
         self.after_id = None            # id of the scheduled tick, so it can be cancelled
         self.message_until = None       # until when the "interval elapsed" message stays visible
         self.waiting_for_start = False  # True during the "Start in" phase (the sound plays at the start)
+        # Text of the sound problem line. The playback thread only sets this string; the main thread
+        # copies it into the label (show_sound_status), because tkinter must not be touched from a thread.
+        self.sound_status = ""
 
         self.load_settings()
 
@@ -94,6 +112,7 @@ class IntervalTimerApp:
         style.configure("TFrame", background=COLOR_BG)
         style.configure("TLabel", background=COLOR_BG, foreground=COLOR_TEXT, font=font)
         style.configure("Countdown.TLabel", font=(UI_FONT, COUNTDOWN_FONT_SIZE, "bold"))
+        style.configure("Status.TLabel", font=(UI_FONT, 9), foreground=COLOR_WARNING)
 
         # Entries: white field, thin grey border that turns blue when the field has the focus
         style.configure("TEntry", fieldbackground="white", foreground=COLOR_TEXT, insertcolor=COLOR_TEXT,
@@ -173,11 +192,17 @@ class IntervalTimerApp:
         self.save_button = ttk.Button(button_frame, text="Save", width=10, command=self.save_clicked)
         self.save_button.grid(row=0, column=2)
 
+        # Sound problem line under the buttons (empty when everything is fine). Its row is always
+        # reserved, so the window does not change size when a message appears.
+        self.status_label = ttk.Label(content, text="", style="Status.TLabel", wraplength=460, justify="center")
+        self.status_label.grid(row=5, column=0, columnspan=2, pady=(12, 0))
+
         # Size the window to its content (never smaller), a little wider than the form for air
         self.root.update_idletasks()
         needed_width, needed_height = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
-        self.root.minsize(needed_width, needed_height)
-        self.root.geometry(f"{max(needed_width, MIN_WINDOW_WIDTH)}x{needed_height}")
+        # No fixed geometry: the window follows its content, so a long (wrapped) sound message
+        # makes it a little taller instead of being cut off
+        self.root.minsize(max(needed_width, MIN_WINDOW_WIDTH), needed_height)
 
         # Load the saved interval and sound file into the fields (the start time is never saved)
         if self.settings.get("interval"):
@@ -309,6 +334,9 @@ class IntervalTimerApp:
                 return
 
         self.sound_path = sound_path
+        # Show a sound problem in the window from the start, not only when the first alarm rings
+        self.sound_status = SOUND_MISSING_MESSAGE if sound_path and not os.path.exists(sound_path) else ""
+        self.show_sound_status()
 
         # Starting again replaces the previous countdown instead of running a second one
         self.cancel_loop()
@@ -353,6 +381,7 @@ class IntervalTimerApp:
             return
         try:
             self.tick()
+            self.show_sound_status()
         except Exception:
             # Report the problem, but never let one failure stop the countdown:
             # the next tick is always scheduled below
@@ -394,14 +423,24 @@ class IntervalTimerApp:
             remaining = self.interval_seconds - elapsed
             self.countdown_label.config(text=f"Time left: {format_hms(math.ceil(remaining))}", foreground=COLOR_RUNNING)
 
+    def show_sound_status(self):
+        # Copies the sound problem text into the window; runs in the main thread only
+        if self.status_label.cget("text") != self.sound_status:
+            self.status_label.config(text=self.sound_status)
+
+    def report_sound(self, message):
+        # Called from the playback thread: it only stores the text (an empty text clears the warning)
+        self.sound_status = message
+
     def play_sound(self):
         # The timer is never silent: without a playable file the system beep is used instead
         if self.sound_path and os.path.exists(self.sound_path):
             # Playback waits for the end of the sound, so it runs in a separate thread
-            threading.Thread(target=self.play_sound_in_background, args=(self.sound_path,), daemon=True).start()
+            threading.Thread(target=self.play_sound_in_background, args=(self.sound_path, self.report_sound),
+                             daemon=True).start()
         else:
             if self.sound_path:
-                print("Sound file not found, using the system beep:", self.sound_path)
+                self.sound_status = SOUND_MISSING_MESSAGE
             threading.Thread(target=self.beep_fallback, daemon=True).start()
 
     @staticmethod
@@ -415,8 +454,10 @@ class IntervalTimerApp:
             print("Fallback beep failed:", e)
 
     @staticmethod
-    def play_sound_in_background(path):
-        # Playback through the Windows MCI player (winmm.dll): no external packages, works for mp3 and wav
+    def play_sound_in_background(path, report=None):
+        # Playback through the Windows MCI player (winmm.dll): no external packages, works for mp3 and wav.
+        # `report` (optional) receives a text for the sound problem line: "" when the sound played fine,
+        # an error text when it could not be played.
         try:
             winmm = ctypes.windll.winmm
         except AttributeError:
@@ -439,8 +480,11 @@ class IntervalTimerApp:
                 mci(f"play {alias} wait")
             finally:
                 winmm.mciSendStringW(f"close {alias}", None, 0, None)
+            if report:
+                report("")
         except Exception as e:
-            print("Sound playback error:", e)
+            if report:
+                report(f"The sound could not be played ({e}) - the system beep is used instead.")
             # Better a plain beep than silence
             IntervalTimerApp.beep_fallback()
 
