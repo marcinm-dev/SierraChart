@@ -18,6 +18,7 @@ Custom studies for [Sierra Chart](https://www.sierrachart.com/) written in ACSIL
 | Tool | What it does | Latest version |
 |---|---|---|
 | [IntervalTimer](IntervalTimer/) | A small Python (tkinter) desktop timer: counts down a set interval, plays a sound at the end and repeats. Not a Sierra Chart study. | V8 (`intervaltimer-v8`) |
+| [RenameTool](RenameTool/) | A small Python (tkinter) desktop tool that renames the files of one folder to a fixed series of names and can add a numeric prefix. Not a Sierra Chart study. | V1 (`renametool-v1`) |
 
 ## Building a study
 
