@@ -36,12 +36,12 @@ SCSFExport scsf_DiNapoliMACDP(SCStudyInterfaceRef sc)
         return;
     }
 
-    // --- OPTYMALIZACJA PAMIĘCI (BEZ ZMIAN) ---
+    // --- MEMORY OPTIMISATION (UNCHANGED) ---
     SCFloatArrayRef FastEMA = Predictor.Arrays[0];
     SCFloatArrayRef SlowEMA = Predictor.Arrays[1];
     SCFloatArrayRef SignalLine = Predictor.Arrays[2];
 
-    // --- ARCHITEKTURA MASTER STATE ---
+    // --- MASTER STATE ARCHITECTURE ---
     int Btn = sc.Input[0].GetInt();
     int& MasterState = sc.GetPersistentInt(10); 
     int& LastHideStudy = sc.GetPersistentInt(12);
@@ -53,20 +53,20 @@ SCSFExport scsf_DiNapoliMACDP(SCStudyInterfaceRef sc)
         Initialized = 1;
     }
 
-    // --- POPRAWIONE SPRZĘŻENIE ZWROTNE ---
+    // --- CORRECTED FEEDBACK COUPLING ---
     if (sc.Index == sc.UpdateStartIndex)
     {
-        // 1. Sprawdzamy czy zmiana pochodzi z przycisku (Click)
+        // 1. Check whether the change comes from the button (click)
         if (sc.MenuEventID == Btn)
         {
             MasterState = !MasterState; 
             
-            // *** ZMIANA: USUNIĘTO sc.MenuEventID = 0; *** // Uzasadnienie: Pozostawienie MenuEventID pozwala innym wskaźnikom 
-            // (jak Expansion) sprawdzić, czy ich własne przyciski zostały wciśnięte.
+            // *** CHANGE: REMOVED sc.MenuEventID = 0; *** // Reason: Leaving MenuEventID in place lets other studies 
+            // (such as Expansion) check whether their own buttons were pressed.
             
             if (MasterState == 1) sc.FlagFullRecalculate = 1;
         }
-        // 2. Jeśli to nie przycisk, a flaga systemowa różni się od naszej pamięci -> zmiana w F6
+        // 2. If it is not the button and the system flag differs from our memory -> a change made in F6
         else if (sc.HideStudy != LastHideStudy)
         {
             MasterState = !sc.HideStudy;
@@ -74,7 +74,7 @@ SCSFExport scsf_DiNapoliMACDP(SCStudyInterfaceRef sc)
         }
     }
 
-    // --- FINALNY ZATRZASK I AKTUALIZACJA UI ---
+    // --- FINAL LATCH AND UI UPDATE ---
     if (sc.Index == sc.ArraySize - 1)
     {
         sc.HideStudy = !MasterState;
@@ -86,7 +86,7 @@ SCSFExport scsf_DiNapoliMACDP(SCStudyInterfaceRef sc)
         Predictor.DrawStyle = (MasterState == 1) ? DRAWSTYLE_LINE : DRAWSTYLE_IGNORE;
     }
 
-    // --- MATEMATYKA (BEZ ZMIAN) ---
+    // --- MATH (UNCHANGED) ---
     static const double alphaFast = 0.213;   
     static const double alphaSlow = 0.108;   
     static const double alphaSignal = 0.199;  
