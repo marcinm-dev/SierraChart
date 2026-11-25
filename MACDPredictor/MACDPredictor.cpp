@@ -2,6 +2,21 @@
 
 SCDLLName("DiNapoli_MACDP_Navigator_Replica_v10")
 
+// Sierra arrays hold only float, so a double is kept as two floats:
+// Hi = the value rounded to float, Lo = the small leftover that float cannot hold.
+static void StoreSplit(SCFloatArrayRef Hi, SCFloatArrayRef Lo, int Index, double Value)
+{
+    float HiPart = (float)Value;
+    Hi[Index] = HiPart;
+    Lo[Index] = (float)(Value - (double)HiPart);
+}
+
+// Rebuilds the double from the two float arrays.
+static double LoadSplit(SCFloatArrayRef Hi, SCFloatArrayRef Lo, int Index)
+{
+    return (double)Hi[Index] + (double)Lo[Index];
+}
+
 SCSFExport scsf_DiNapoliMACDP(SCStudyInterfaceRef sc)
 {
     SCSubgraphRef Predictor = sc.Subgraph[0];
@@ -40,6 +55,9 @@ SCSFExport scsf_DiNapoliMACDP(SCStudyInterfaceRef sc)
     SCFloatArrayRef FastEMA = Predictor.Arrays[0];
     SCFloatArrayRef SlowEMA = Predictor.Arrays[1];
     SCFloatArrayRef SignalLine = Predictor.Arrays[2];
+    SCFloatArrayRef FastEMALo = Predictor.Arrays[3];
+    SCFloatArrayRef SlowEMALo = Predictor.Arrays[4];
+    SCFloatArrayRef SignalLineLo = Predictor.Arrays[5];
 
     // --- MASTER STATE ARCHITECTURE ---
     int Btn = sc.Input[0].GetInt();
@@ -94,24 +112,38 @@ SCSFExport scsf_DiNapoliMACDP(SCStudyInterfaceRef sc)
 
     if (sc.Index == 0)
     {
-        FastEMA[0] = sc.Close[0];
-        SlowEMA[0] = sc.Close[0];
-        SignalLine[0] = 0;
+        StoreSplit(FastEMA, FastEMALo, 0, (double)sc.Close[0]);
+        StoreSplit(SlowEMA, SlowEMALo, 0, (double)sc.Close[0]);
+        StoreSplit(SignalLine, SignalLineLo, 0, 0.0);
         return;
     }
 
-    FastEMA[sc.Index] = (float)((sc.Close[sc.Index] * alphaFast) + (FastEMA[sc.Index - 1] * (1.0 - alphaFast)));
-    SlowEMA[sc.Index] = (float)((sc.Close[sc.Index] * alphaSlow) + (SlowEMA[sc.Index - 1] * (1.0 - alphaSlow)));
+    double prevFast = LoadSplit(FastEMA, FastEMALo, sc.Index - 1);
+    double prevSlow = LoadSplit(SlowEMA, SlowEMALo, sc.Index - 1);
+    double prevSignal = LoadSplit(SignalLine, SignalLineLo, sc.Index - 1);
 
-    double currentMACD = (double)FastEMA[sc.Index] - (double)SlowEMA[sc.Index];
-    SignalLine[sc.Index] = (float)((currentMACD * alphaSignal) + (SignalLine[sc.Index - 1] * (1.0 - alphaSignal)));
+    double fastValue = ((double)sc.Close[sc.Index] * alphaFast) + (prevFast * (1.0 - alphaFast));
+    double slowValue = ((double)sc.Close[sc.Index] * alphaSlow) + (prevSlow * (1.0 - alphaSlow));
+
+    double currentMACD = fastValue - slowValue;
+    double signalValue = (currentMACD * alphaSignal) + (prevSignal * (1.0 - alphaSignal));
+
+    StoreSplit(FastEMA, FastEMALo, sc.Index, fastValue);
+    StoreSplit(SlowEMA, SlowEMALo, sc.Index, slowValue);
+    StoreSplit(SignalLine, SignalLineLo, sc.Index, signalValue);
 
     if (MasterState == 1 || sc.Index == sc.ArraySize - 1)
     {
         if (sc.Index >= 25)
         {
-            double rawPredictor = (SignalLine[sc.Index] - (FastEMA[sc.Index] * 0.787) + (SlowEMA[sc.Index] * 0.892)) / denominator;
-            Predictor[sc.Index] = sc.RoundToTickSize((float)rawPredictor);
+            double rawPredictor = (signalValue - (fastValue * 0.787) + (slowValue * 0.892)) / denominator;
+
+            // Nearest tick, half up, done in double (no float cast before the rounding)
+            double tickSize = (double)sc.TickSize;
+            if (tickSize > 0.0)
+                rawPredictor = floor(rawPredictor / tickSize + 0.5) * tickSize;
+
+            Predictor[sc.Index] = (float)rawPredictor;
         }
     }
 }

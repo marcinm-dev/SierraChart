@@ -4,11 +4,12 @@ DiNapoli MACD Predictor for Sierra Chart: draws the price at which MACD would cr
 
 ## Versions
 
-Versions are git tags: `macdpredictor-v2`, `macdpredictor-v3`, `macdpredictor-v4`.
+Versions are git tags: `macdpredictor-v2`, `macdpredictor-v3`, `macdpredictor-v4`, `macdpredictor-v5`.
 
 - **V2**: Control Bar toggle button with Master State, TradeNavigator-replica MACD predictor line.
 - **V3**: Stealth look: clean header, value label on the price scale, thinner line, button 3.
 - **V4**: Code comments translated from Polish to English; the code itself is unchanged.
+- **V5**: The EMAs are kept in double precision (a double stored as two float arrays) and the predictor is rounded to the tick in double, so the line matches the double-precision TradeNavigator values more closely; the formula, constants, button and look are unchanged.
 
 ## Notes
 
