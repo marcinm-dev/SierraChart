@@ -2,7 +2,7 @@
 
 Ten small ACSIL studies that colour a bar on the main price panel when the bar meets one simple condition. They are ports of Trade Navigator (TradeSense) conditions. Each study is its own source file and builds to its own DLL, so each can be added to a chart separately.
 
-Each study has a Control Bar button that shows or hides it. The button logic is the "Master State" pattern from MACDPredictor and DMA3x3. This state of the sources has not been built or tested in Sierra Chart yet and has no version tag.
+Each study has a Control Bar button that shows or hides it. The button logic is the "Master State" pattern from MACDPredictor and DMA3x3. All ten studies were built and tested in Sierra Chart; this is version 1 (see Versions).
 
 ## Studies
 
@@ -28,3 +28,9 @@ The button number is an input (`Numer Przycisku`) and must match the Custom Stud
 ## Building
 
 Copy the `.cpp` files into your Sierra Chart `ACS_Source` folder and build the 64-bit DLL with **Analysis > Build Custom Studies DLL**.
+
+## Versions
+
+Versions are git tags: `highlightbar-v1`.
+
+- **V1**: ten colour-bar studies (four compare a bar with the previous bar, six test where the close sits in the bar range), each with its own Control Bar show/hide button; tick-rounded 25% and 50% thresholds; two-colour `equal` studies.

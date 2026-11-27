@@ -14,6 +14,7 @@ Custom studies for [Sierra Chart](https://www.sierrachart.com/) written in ACSIL
 | [DiNapoliRetracement](DiNapoliRetracement/) | DiNapoli retracement grids drawn with two clicks: a Focus point and one or more Reaction points give the 0.382, 0.618 and 1.000 levels. Has Control Bar buttons. | V26 (`dinapoliretracement-v26`) |
 | [DMA3x3](DMA3x3/) | Displaced Moving Average 3x3 (SMA of the last 3 closes shifted forward by 3 bars) with a Control Bar show/hide button. | V2 (`dma3x3-v2`) |
 | [FibonacciGrid](FibonacciGrid/) | Fibonacci grid of up to 10 levels drawn with two clicks between swing points (wick snapping), with four presets, a settings window and Control Bar buttons. | V23 (`fibonaccigrid-v23`) |
+| [Highlight Bar](Highlight%20Bar/) | Ten small studies that colour a bar on the price panel when it meets one condition: a new lower low, higher high, higher low or lower high, or a close in the top or bottom 25% or 50% of the bar range. Each has a Control Bar show/hide button. | V1 (`highlightbar-v1`) |
 | [HorizontalGrid](HorizontalGrid/) | Dotted horizontal price grid drawn with GDI; the step is chosen automatically and the Y-axis scale labels follow it (tuned for ES). | V10 (`horizontalgrid-v10`) |
 | [MACDPredictor](MACDPredictor/) | DiNapoli MACD Predictor with a Control Bar toggle. | V5 (`macdpredictor-v5`) |
 
