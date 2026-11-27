@@ -27,9 +27,10 @@ The button numbers are fixed in the source. Each button number must be unique am
 
 ## Versions
 
-Versions are git tags: `changeinterval-v1`.
+Versions are git tags: `changeinterval-v1`, `changeinterval-v2`.
 
 - **V1**: the first working version of both buttons (20M and 3M).
+- **V2**: source comments translated to English; the code is unchanged.
 
 ## Known limitations
 
