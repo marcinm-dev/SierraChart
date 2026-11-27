@@ -35,4 +35,3 @@ Versions are git tags: `changeinterval-v1`.
 
 - The result depends on Sierra Chart's own interval command line accepting the typed characters in the chart window.
 - Each study sets the interval in minutes only. A new interval needs a new copy of the file with its own button number and characters.
-- Source comments are still in Polish.

@@ -9,7 +9,7 @@ SCSFExport scsf_ChangeIntervalToM20(SCStudyInterfaceRef sc)
     if (sc.SetDefaults)
     {
         sc.GraphName = "Change Interval to M20";
-        sc.AutoLoop = 0;      // Wyłączone automatyczne przeliczanie słupków 
+        sc.AutoLoop = 0;      // Automatic per-bar calculation disabled 
         sc.GraphRegion = 0;   
         sc.HideStudy = 1;     
 
@@ -20,24 +20,24 @@ SCSFExport scsf_ChangeIntervalToM20(SCStudyInterfaceRef sc)
 
     if (sc.MenuEventID == ButtonID)
     {
-        // 1. UI: Natychmiastowe odświeżenie przycisku na pasku 
+        // 1. UI: Refresh the Control Bar button immediately 
         sc.SetCustomStudyControlBarButtonEnable(ButtonID, 0);
 
-        // 2. PERFORMANCE: Blokujemy niepotrzebne rysowanie starego interwału 
+        // 2. PERFORMANCE: Skip needless drawing of the old interval 
         sc.DoNotRedrawChartAfterStudyReturns = 1;
 
-        // 3. POINTER: Pobieramy uchwyt okna wykresu 
+        // 3. POINTER: Get the handle of the chart window 
         HWND hWnd = static_cast<HWND>(sc.ChartWindowHandle);
 
         if (hWnd)
         {
-            // PURE UI STREAM: Wysyłamy znaki w jednym strumieniu.
-            // Użycie 0x0D (ASCII Enter) zamiast VK_RETURN w WM_KEYDOWN
-            // zapewnia maksymalną spójność dla bufora wejściowego Sierry.
+            // PURE UI STREAM: Send the characters as one stream.
+            // Using 0x0D (ASCII Enter) instead of VK_RETURN in WM_KEYDOWN
+            // gives the Sierra Chart input buffer maximum consistency.
             ::PostMessage(hWnd, WM_CHAR, '2', 0);
             ::PostMessage(hWnd, WM_CHAR, '0', 0);
             ::PostMessage(hWnd, WM_CHAR, 'm', 0); 
-            ::PostMessage(hWnd, WM_CHAR, 0x0D, 0); // 0x0D to Carriage Return (Enter)
+            ::PostMessage(hWnd, WM_CHAR, 0x0D, 0); // 0x0D is Carriage Return (Enter)
         }
 
         return;
