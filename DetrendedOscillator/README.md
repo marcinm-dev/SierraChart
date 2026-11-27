@@ -13,3 +13,10 @@ Versions are git tags: `detrendedoscillator-v1`, `detrendedoscillator-v2`, `detr
 - **V6**: Split into Engine and Hider studies with startup audit, historical lock and 100 ms throttling.
 - **V7**: Renamed to Engine and Switch, bar-close bypass of throttling, gap handling restored, names without ShortName.
 - **V8**: Oscillator value label shown on the price scale.
+
+## Notes
+
+- There is no V3: the work of the third chat session was saved together with V4, so it has no snapshot of its own.
+- The source file is `DetrendedCombo.cpp` in every version. The DLL name and the call `DetrendedCombo.scsf_DO_Engine` depend on it. The author's notes call the early files `DetrendedOscillator.cpp`; here all versions share one file name.
+- V4 and V5 still export `scsf_DetrendedOscillator` without a short name, although the notes describe restoring `scsf_DiNapoliDetrendedOscillator` and the short name `DDO` at the end of the V4 session. That fix was never saved in a snapshot, so the versions are kept exactly as saved.
+- The commit dates are the dates the code snapshots were saved (US Eastern time). Code comments are in Polish and unchanged.
